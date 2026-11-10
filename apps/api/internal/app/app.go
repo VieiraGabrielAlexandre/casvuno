@@ -14,6 +14,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/categories"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/households"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/identity"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/audit"
@@ -38,7 +39,17 @@ var Module = fx.Options(
 	),
 	identityModule,
 	householdsModule,
+	categoriesModule,
 	fx.Invoke(func(*http.Server) {}), // the server is the root of the object graph
+)
+
+var categoriesModule = fx.Module("categories",
+	fx.Provide(
+		categories.NewService,
+		categories.NewHandler,
+		// categories implements the consumer-defined households.CategorySeeder.
+		func(s *categories.Service) households.CategorySeeder { return s },
+	),
 )
 
 var identityModule = fx.Module("identity",
@@ -55,8 +66,8 @@ var identityModule = fx.Module("identity",
 
 var householdsModule = fx.Module("households",
 	fx.Provide(
-		func(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, cfg config.Config) *households.Service {
-			return households.NewService(tx, clk, rec, cfg.AppOrigin)
+		func(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, seeder households.CategorySeeder, cfg config.Config) *households.Service {
+			return households.NewService(tx, clk, rec, seeder, cfg.AppOrigin)
 		},
 		households.NewHandler,
 		// households implements the consumer-defined identity.InviteChecker.

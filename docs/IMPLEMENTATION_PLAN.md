@@ -71,7 +71,7 @@ casvuno/
     └── scripts/backup.sh  restore-test.sh
 ```
 
-**Comandos (Makefile):** existentes: `setup`, `up`, `down`, `logs`, `ps`, `dev`, `web`, `api`, `migrate-up`, `migrate-down`, `test`, `test-unit`, `lint`, `fmt`, `build`. Também existentes: `gen`, `migrate-new`. Previstos: `seed` (F1.5), `e2e` (F1.8), `backup`, `restore-test` e `check-invariants` (F8.3).
+**Comandos (Makefile):** existentes: `setup`, `up`, `down`, `logs`, `ps`, `dev`, `web`, `api`, `migrate-up`, `migrate-down`, `test`, `test-unit`, `lint`, `fmt`, `build`. Também existentes: `gen`, `migrate-new`. Previstos: `seed` (F1.5), `e2e` (F8.5), `backup`, `restore-test` e `check-invariants` (F8.3).
 
 **Dependências previstas (todas gratuitas/OSS).** Go: `fx`, `chi/v5`, `pgx/v5`, `golang-migrate/v4`, `validator/v10`, `google/uuid`, `x/crypto` (argon2), `x/time` (rate); em teste, `testcontainers-go` e `kin-openapi`. Ferramentas: `sqlc`, `golangci-lint`. Web: `next`, `react`, `typescript`, `tailwindcss`, shadcn/ui (copiado), `@tanstack/react-query`, `react-hook-form`, `zod`, `@hookform/resolvers`, `recharts`, `openapi-fetch`; dev: `openapi-typescript`, `vitest`, `@testing-library/react`, `@playwright/test`, `eslint`, `prettier`. **Qualquer dependência fora desta lista exige justificativa no PR.**
 
@@ -97,7 +97,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 
 ### F1 — Identidade e família
 
-**Entrega 2 (2026-11-10):** F1.1–F1.4, F1.6, F1.7 e F1.8 (sem E2E) concluídas. F1.5 (categorias) ficou para a próxima entrega: é catálogo das funcionalidades financeiras e não fazia parte do escopo pedido.
+**F1 concluída (2026-11-10).** Entrega 2: F1.1–F1.4, F1.6–F1.8 (CI verde no PR #2). Entrega 3: F1.5. Os testes E2E de todas as fases ficam concentrados na F8.5 (decisão do usuário). F1.5 (categorias) ficou para a próxima entrega: é catálogo das funcionalidades financeiras e não fazia parte do escopo pedido.
 
 | ID | Tarefa | Dep. | Aceite | Verificar | Status |
 |---|---|---|---|---|---|
@@ -105,10 +105,10 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | F1.2 | Middleware CSRF (Origin/Sec-Fetch-Site + content-type) | F1.1 | POST com Origin estranho → 403; GET não é afetado | `make test` | ✅ |
 | F1.3 | Migration `audit_events` + `platform/audit.Recorder` (na transação) | F0.4 | Evento gravado só em caso de commit (teste de rollback) | `make test` | ✅ |
 | F1.4 | Migration `households`/`members`/`invites`; criar e listar famílias; `GET/PATCH /households/:id` (PATCH só OWNER); `RequireMember`/`RequireOwner` | F1.1, F1.3 | Não-membro → 404; MEMBER no PATCH → 403; criador vira OWNER | `make test` | ✅ |
-| F1.5 | Migration `categories` + módulo `categories` (CRUD, arquivar, 2 níveis, `kind` coerente) + seed pt-BR na criação da família | F1.4 | RN-022: arquivar categoria referenciada preserva histórico; pai de outra família → 422; família nova já vem com categorias padrão | `make test` | ⏳ próxima entrega (seed pt-BR será ligado à criação da família) |
+| F1.5 | Migration `categories` + módulo `categories` (CRUD, arquivar, 2 níveis, `kind` coerente) + seed pt-BR na criação da família | F1.4 | RN-022: arquivar categoria referenciada preserva histórico; pai de outra família → 422; família nova já vem com categorias padrão | `make test` | ✅ (entrega 3: 49 categorias pt-BR na criação da família; DELETE = arquivar; página `/categories`) |
 | F1.6 | Convites (criar, aceitar, revogar), listar membros, desativar membro (≥ 1 OWNER), aceite de convite no cadastro com registro fechado | F1.4 | Token só em hash; expirado/usado/revogado → 422; T16 (membro desativado perde acesso e o histórico é preservado) | `make test` | ✅ (+ `casvuno admin reset-password`, I-12) |
 | F1.7 | Suíte de isolamento table-driven (ADR 0006) com rotas F1; cresce a cada fase | F1.4 | Teste falha se uma rota `/households/{id}` não estiver na suíte | `make test` | ✅ (`internal/app/households_integration_test.go`) |
-| F1.8 | Web: layout (bottom nav/sidebar), login, cadastro, onboarding, seleção de família, aceitar convite, membros e categorias em Configurações | F1.6, F0.7 | E2E: A cadastra → cria família → gera convite → B aceita → B vê a família | `make e2e` | 🟡 telas entregues e testadas com Vitest; E2E Playwright pendente |
+| F1.8 | Web: layout (bottom nav/sidebar), login, cadastro, onboarding, seleção de família, aceitar convite, membros e categorias em Configurações | F1.6, F0.7 | E2E: A cadastra → cria família → gera convite → B aceita → B vê a família | `make e2e` | ✅ telas entregues e testadas com Vitest; E2E ↪ **F8.5** (decisão de 2026-11-10) |
 
 ### F2 — Contas, idempotência e transferências
 
@@ -178,7 +178,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | F8.2 | `compose.prod.yaml`, Caddyfile (TLS, HSTS, CSP, proxy), `docs/deployment.md` (runbook, variáveis, exclusão de família, rotação de segredos) | F0.8 | Stack prod sobe localmente com TLS interno do Caddy | `docker compose -f infra/compose.prod.yaml up` |
 | F8.3 | `infra/scripts/backup.sh` + `restore-test.sh` + `check-invariants.sql` completo | F6.1 | `make backup && make restore-test` passa | idem |
 | F8.4 | Revisão de segurança: suíte de isolamento cobrindo 100% das rotas, rate limit de convites, auditoria em todas as mutações, revisão de logs sem dados sensíveis | todas | Checklist do `AGENTS.md` §7 marcado | `make test` |
-| F8.5 | Acessibilidade (contraste AA, teclado, labels) e E2E mobile das jornadas críticas | F6.6 | E2E verde em viewport mobile | `make e2e` |
+| F8.5 | **Suíte E2E (Playwright) de todo o produto** + `make e2e` + job no CI: cadastro → família → convite → aceite; gasto rápido por favorito (≤ 3 interações); compra parcelada → fatura → pagamento; dashboard separando métricas (T18); offline (T19); viewport mobile. Acessibilidade (contraste AA, teclado, labels) | F6.6, F7.3, F8.1 | E2E verde em desktop e mobile; os E2E adiados das fases F1–F7 cobertos | `make e2e` |
 
 **Fora da V1 (não implementar sem nova aprovação):** tudo listado no README §0 "Fora da V1", Web Push, recuperação de senha por e-mail, troca de papel, exclusão de família por endpoint, edição estrutural de lançamentos, auto-close de fatura.
 
@@ -213,7 +213,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | 000002 | users, sessions | F1.1 ✅ |
 | 000003 | households, household_members, household_invites | F1.4 ✅ |
 | 000004 | audit_events (append-only por trigger; FK para households) | F1.3 ✅ |
-| 000005 | categories | F1.5 |
+| 000005 | categories | F1.5 ✅ |
 | 000006 | idempotency_keys | F2.1 |
 | 000007 | accounts, account_movements, transfers | F2.2 |
 | 000008 | transactions, obligations, obligation_payments | F3.1 |

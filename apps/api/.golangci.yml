@@ -15,6 +15,9 @@ linters:
     - unconvert
     - depguard
   settings:
+    misspell:
+      # Only comments (English). String literals are user-facing pt-BR text (AGENTS.md).
+      mode: restricted
     depguard:
       rules:
         fx-only-in-composition-root:

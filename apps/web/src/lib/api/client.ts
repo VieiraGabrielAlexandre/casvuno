@@ -7,6 +7,8 @@ export type Household = components["schemas"]["Household"];
 export type Member = components["schemas"]["Member"];
 export type Invite = components["schemas"]["Invite"];
 export type CreatedInvite = components["schemas"]["CreatedInvite"];
+export type Category = components["schemas"]["Category"];
+export type CategoryKind = components["schemas"]["CategoryKind"];
 type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 export type FieldError = NonNullable<ErrorEnvelope["error"]["details"]>[number];
 
@@ -33,6 +35,8 @@ export class ApiError extends Error {
 
 const offlineMessage =
   "Sem conexão com o servidor. Verifique sua internet e tente novamente.";
+const unavailableMessage =
+  "O servidor está indisponível no momento. Tente novamente em instantes.";
 
 /**
  * Awaits an openapi-fetch call and returns its data, throwing ApiError on any failure.
@@ -50,6 +54,15 @@ export async function call<T>(
   const { data, error, response } = result;
   if (!response.ok) {
     const env = error as Partial<ErrorEnvelope> | undefined;
+    // A 5xx without our envelope comes from the proxy (Next dev server, Caddy), not from
+    // the API: the API is down or unreachable.
+    if (!env?.error && response.status >= 500) {
+      throw new ApiError(
+        response.status,
+        "SERVER_UNAVAILABLE",
+        unavailableMessage,
+      );
+    }
     throw new ApiError(
       response.status,
       env?.error?.code ?? "UNKNOWN_ERROR",

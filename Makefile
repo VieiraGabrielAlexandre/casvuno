@@ -54,6 +54,8 @@ ps: ## Show Compose services
 dev: up web ## Start the stack and the web dev server (http://localhost:3000)
 
 web: .env ## Run the Next.js dev server on the host (proxies /api and /health to the API)
+	@$(LOAD_ENV) && curl -fsS -m 2 -o /dev/null "$${API_URL:-http://localhost:8090}/health" \
+		|| echo "AVISO: a API não respondeu em $${API_URL:-http://localhost:8090}/health. Rode 'make up' (ou use 'make dev')."
 	$(LOAD_ENV) && $(PNPM) --filter web dev
 
 api: .env ## Run the API on the host instead of Compose (stop the Compose api first)

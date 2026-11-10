@@ -22,26 +22,27 @@ type Handler struct {
 // NewHandler builds the households HTTP handler.
 func NewHandler(svc *Service, log *slog.Logger) *Handler { return &Handler{svc: svc, log: log} }
 
-// Routes registers household routes on a router already protected by authentication.
-// Routes under /households/{householdId} require an active membership (ADR 0006).
+// Routes registers the routes that are not scoped to one household. The router must already
+// require an authenticated user.
 func (h *Handler) Routes(r chi.Router) {
 	r.Post("/households", h.create)
 	r.Get("/households", h.list)
 	r.Post("/invites/accept", h.acceptInvite)
+}
 
-	r.Route("/households/{householdId}", func(r chi.Router) {
-		r.Use(h.RequireMember)
-		r.Get("/", h.get)
-		r.Get("/members", h.members)
+// ScopedRoutes registers routes relative to /households/{householdId}. The caller mounts
+// them behind RequireMember, together with the scoped routes of other modules (ADR 0006).
+func (h *Handler) ScopedRoutes(r chi.Router) {
+	r.Get("/", h.get)
+	r.Get("/members", h.members)
 
-		r.Group(func(r chi.Router) {
-			r.Use(RequireOwner(h.log))
-			r.Patch("/", h.update)
-			r.Delete("/members/{memberId}", h.deactivateMember)
-			r.Post("/invites", h.createInvite)
-			r.Get("/invites", h.listInvites)
-			r.Delete("/invites/{inviteId}", h.revokeInvite)
-		})
+	r.Group(func(r chi.Router) {
+		r.Use(RequireOwner(h.log))
+		r.Patch("/", h.update)
+		r.Delete("/members/{memberId}", h.deactivateMember)
+		r.Post("/invites", h.createInvite)
+		r.Get("/invites", h.listInvites)
+		r.Delete("/invites/{inviteId}", h.revokeInvite)
 	})
 }
 

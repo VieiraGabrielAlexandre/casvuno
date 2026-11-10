@@ -18,5 +18,6 @@
 - Datas sempre via `Clock` falso. Não usar `time.Now()` em domínio ou caso de uso.
 - Nada de mocks do banco para lógica com SQL: usar o banco real. Fakes manuais (sem framework de mock) só para interfaces entre módulos em testes unitários de caso de uso.
 - Cobertura não é meta numérica, mas `domain/` de `ledger`, `cards` e `recurrences` deve ficar perto de 100% de linhas.
+- **E2E adiado (2026-11-10):** a suíte Playwright é construída de uma vez na F8.5, cobrindo todas as fases. Até lá, a UI é coberta por Vitest e os fluxos pela API por testes de integração.
 - `make test` = unitários + integração (exige Docker). `make test-unit` não precisa de Docker. `make e2e` sobe a stack.
 - O mapeamento T01–T22 → teste fica em `docs/IMPLEMENTATION_PLAN.md` §4 e é mantido em dia.

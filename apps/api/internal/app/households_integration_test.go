@@ -155,7 +155,7 @@ func TestDeactivateMemberPreservesHistoryAndKeepsAnOwner(t *testing.T) {
 
 // householdRoutes lists every route under /households/{householdId} with a request that
 // exercises it. TestEveryHouseholdRouteIsCoveredByIsolationTests keeps it complete.
-func householdRoutes(memberID, inviteID string) []struct {
+func householdRoutes(memberID, inviteID, categoryID string) []struct {
 	method, path string
 	body         any
 } {
@@ -170,6 +170,10 @@ func householdRoutes(memberID, inviteID string) []struct {
 		{http.MethodPost, "/invites", map[string]any{}},
 		{http.MethodGet, "/invites", nil},
 		{http.MethodDelete, "/invites/" + inviteID, nil},
+		{http.MethodGet, "/categories", nil},
+		{http.MethodPost, "/categories", map[string]any{"name": "Invasão", "kind": "EXPENSE"}},
+		{http.MethodPatch, "/categories/" + categoryID, map[string]any{"name": "Invadida"}},
+		{http.MethodDelete, "/categories/" + categoryID, nil},
 	}
 }
 
@@ -180,12 +184,13 @@ func TestHouseholdIsolation(t *testing.T) {
 	ownerA, _ := api.registerUser("ownerA")
 	a := ownerA.createHousehold("Casa A")
 	invA := ownerA.createInvite(a.ID)
+	catA := ownerA.firstCategory(a.ID, "EXPENSE")
 
 	ownerB, _ := api.registerUser("ownerB")
 	b := ownerB.createHousehold("Casa B")
 
 	before := countRows(t, api)
-	for _, rt := range householdRoutes(a.MemberID, invA.ID) {
+	for _, rt := range householdRoutes(a.MemberID, invA.ID, catA.ID) {
 		path := strings.TrimSuffix("/api/v1/households/"+a.ID+rt.path, "/")
 		r := ownerB.expect(http.StatusNotFound, rt.method, path, rt.body)
 		if r.errorCode(t) != "HOUSEHOLD_NOT_FOUND" {
@@ -195,6 +200,13 @@ func TestHouseholdIsolation(t *testing.T) {
 	// A's member and invite IDs addressed through B's household: not found in B.
 	ownerB.expect(http.StatusNotFound, http.MethodDelete, "/api/v1/households/"+b.ID+"/members/"+a.MemberID, nil)
 	ownerB.expect(http.StatusNotFound, http.MethodDelete, "/api/v1/households/"+b.ID+"/invites/"+invA.ID, nil)
+	ownerB.expect(http.StatusNotFound, http.MethodPatch, "/api/v1/households/"+b.ID+"/categories/"+catA.ID, map[string]any{"name": "x"})
+	ownerB.expect(http.StatusNotFound, http.MethodDelete, "/api/v1/households/"+b.ID+"/categories/"+catA.ID, nil)
+	// A's category as parent of a category in B: rejected as if it did not exist (field parentId).
+	if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/categories",
+		map[string]any{"name": "Filha", "kind": "EXPENSE", "parentId": catA.ID}).errorCode(t); code != "PARENT_NOT_FOUND" {
+		t.Fatalf("got %s", code)
+	}
 
 	if after := countRows(t, api); !maps.Equal(before, after) {
 		t.Fatalf("cross-household requests changed data: before %v after %v", before, after)
@@ -216,7 +228,7 @@ func TestHouseholdIsolation(t *testing.T) {
 func TestEveryHouseholdRouteIsCoveredByIsolationTests(t *testing.T) {
 	api := newTestAPI(t)
 	covered := map[string]bool{}
-	for _, rt := range householdRoutes("{memberId}", "{inviteId}") {
+	for _, rt := range householdRoutes("{memberId}", "{inviteId}", "{categoryId}") {
 		covered[rt.method+" /api/v1/households/{householdId}"+rt.path] = true
 	}
 
@@ -278,7 +290,7 @@ func TestAuditTrail(t *testing.T) {
 func countRows(t *testing.T, api *testAPI) map[string]int64 {
 	t.Helper()
 	out := map[string]int64{}
-	for _, table := range []string{"households", "household_members", "household_invites", "audit_events"} {
+	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories"} {
 		var n int64
 		if err := api.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -291,5 +303,11 @@ func countRows(t *testing.T, api *testAPI) map[string]int64 {
 		t.Fatal(err)
 	}
 	out["revoked_invites"] = revoked
+	var archived int64
+	if err := api.pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM categories WHERE NOT is_active").Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	out["archived_categories"] = archived
 	return out
 }

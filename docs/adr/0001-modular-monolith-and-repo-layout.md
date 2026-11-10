@@ -22,6 +22,8 @@ O README define um monólito modular em Go/Fx + Next.js + PostgreSQL. Ele lista 
 ## Estrutura
 Ver `docs/IMPLEMENTATION_PLAN.md` §2. `packages/` existe no workspace pnpm, mas fica vazio até surgir um segundo consumidor TypeScript. A regra "Fx só em `internal/app` e `cmd`" é verificada pelo `depguard` em `apps/api/.golangci.yml`.
 
+**Rotas por família (F1):** `internal/app/router.go` monta `/households/{householdId}` uma única vez, com `households.RequireMember`, e cada módulo registra ali as suas rotas relativas (`ScopedRoutes`/`Routes`). Assim nenhum módulo precisa importar `households` para herdar a autorização.
+
 ## Consequências
 - Um deploy só, uma imagem de API e pouca RAM.
 - Fronteiras explícitas sem custo de rede. A regra "não importar outro módulo" é verificada por `depguard` no golangci-lint.

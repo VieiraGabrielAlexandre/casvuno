@@ -72,17 +72,24 @@ type UpdateInput struct {
 	Timezone *string
 }
 
+// CategorySeeder creates the starter categories of a new household inside the creation
+// transaction. The categories module implements it.
+type CategorySeeder interface {
+	SeedDefaults(ctx context.Context, householdID uuid.UUID) error
+}
+
 // Service implements household use cases.
 type Service struct {
-	tx        *postgres.TxManager
-	clock     clock.Clock
-	audit     *audit.Recorder
-	appOrigin string
+	tx         *postgres.TxManager
+	clock      clock.Clock
+	audit      *audit.Recorder
+	categories CategorySeeder
+	appOrigin  string
 }
 
 // NewService builds the households service. appOrigin is used to build invite links.
-func NewService(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, appOrigin string) *Service {
-	return &Service{tx: tx, clock: clk, audit: rec, appOrigin: appOrigin}
+func NewService(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, categories CategorySeeder, appOrigin string) *Service {
+	return &Service{tx: tx, clock: clk, audit: rec, categories: categories, appOrigin: appOrigin}
 }
 
 var errHouseholdNotFound = kernel.NewError(kernel.ErrNotFound, "HOUSEHOLD_NOT_FOUND", "Família não encontrada.")
@@ -122,6 +129,9 @@ func (s *Service) Create(ctx context.Context, user authctx.User, name, timezone 
 			Role: string(authctx.RoleOwner), JoinedAt: s.clock.Now(),
 		}); err != nil {
 			return fmt.Errorf("create owner membership: %w", err)
+		}
+		if err := s.categories.SeedDefaults(ctx, householdID); err != nil {
+			return fmt.Errorf("seed default categories: %w", err)
 		}
 		h = Household{
 			ID: row.ID, Name: row.Name, Timezone: row.Timezone, Currency: row.Currency,
