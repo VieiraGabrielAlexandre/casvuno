@@ -71,7 +71,7 @@ casvuno/
     └── scripts/backup.sh  restore-test.sh
 ```
 
-**Comandos (Makefile):** existentes: `setup`, `up`, `down`, `logs`, `ps`, `dev`, `web`, `api`, `migrate-up`, `migrate-down`, `test`, `test-unit`, `lint`, `fmt`, `build`. Previstos (entram com a tarefa que os usa): `gen` e `migrate-new` (F1.1), `seed` (F1.5), `e2e` (F1.8), `backup`, `restore-test` e `check-invariants` (F8.3).
+**Comandos (Makefile):** existentes: `setup`, `up`, `down`, `logs`, `ps`, `dev`, `web`, `api`, `migrate-up`, `migrate-down`, `test`, `test-unit`, `lint`, `fmt`, `build`. Também existentes: `gen`, `migrate-new`. Previstos: `seed` (F1.5), `e2e` (F1.8), `backup`, `restore-test` e `check-invariants` (F8.3).
 
 **Dependências previstas (todas gratuitas/OSS).** Go: `fx`, `chi/v5`, `pgx/v5`, `golang-migrate/v4`, `validator/v10`, `google/uuid`, `x/crypto` (argon2), `x/time` (rate); em teste, `testcontainers-go` e `kin-openapi`. Ferramentas: `sqlc`, `golangci-lint`. Web: `next`, `react`, `typescript`, `tailwindcss`, shadcn/ui (copiado), `@tanstack/react-query`, `react-hook-form`, `zod`, `@hookform/resolvers`, `recharts`, `openapi-fetch`; dev: `openapi-typescript`, `vitest`, `@testing-library/react`, `@playwright/test`, `eslint`, `prettier`. **Qualquer dependência fora desta lista exige justificativa no PR.**
 
@@ -81,32 +81,34 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 
 ### F0 — Fundação
 
-**Entrega 1 (2026-11-10) concluída:** F0.1, F0.2, F0.3, F0.6 e F0.8. Por decisão desta entrega ("não criar pacotes sem uso real"), os itens que ainda não têm consumidor foram movidos para a primeira tarefa que precisa deles (coluna "Movido para").
+**F0 concluída em 2026-11-10:** F0.1, F0.2, F0.3, F0.6, F0.8 e F0.9. Por decisão desta entrega ("não criar pacotes sem uso real"), os itens que ainda não têm consumidor foram movidos para a primeira tarefa que precisa deles (coluna "Movido para").
 
 | ID | Tarefa | Dep. | Aceite | Verificar | Status |
 |---|---|---|---|---|---|
 | F0.1 | `git init`, `.gitignore`, `CLAUDE.md`, Makefile (`help`, `setup`, `up`, `down`, `dev`, `web`, `api`, `migrate-*`, `test*`, `lint*`, `fmt`, `build`), `.env.example`, workspace pnpm (`apps/*`, `packages/*`) | — | `make help` lista os alvos; `make setup` funciona num clone limpo | `make help && make setup` | ✅ |
 | F0.2 | `platform/config` (env, fail-fast com todos os erros), `platform/logging` (slog texto/JSON), `cmd/casvuno` (`serve`, `migrate up\|down [N]`) com Fx só em `internal/app`; servidor HTTP com timeouts e shutdown gracioso; router chi com request ID, log de acesso (padrão da rota) e recover | F0.1 | Config inválida encerra com exit 1 e lista os erros; SIGTERM encerra em menos de 10 s com exit 0 | `make test-unit`; `docker compose stop api` | ✅ |
 | F0.3 | `platform/postgres`: pool pgx no lifecycle (ping na inicialização, falha rápida), migrations embutidas (golang-migrate, driver pgx/v5), migration `000001_extensions`; **`GET /health`** (200 com banco, 503 sem, sem detalhes do erro); `infra/compose.yaml` (`db`, `migrate` one-shot, `api`) | F0.2 | 503 sem banco e 200 com banco; ciclo `up/down/up` sem erro | `make migrate-down && make migrate-up`; teste de integração `TestMigrationsUpDownUp` | ✅ |
-| F0.4 | `sqlc.yaml`, `TxManager` e testes de TxManager | F0.3 | — | — | ↪ movido para **F1.1** (primeira query e primeira escrita). O helper Testcontainers já existe em `internal/app/startup_integration_test.go` e vira pacote de teste compartilhado quando o 2º pacote precisar dele |
-| F0.5 | Envelope de erro, decode JSON estrito, paginação keyset, headers de segurança; `kernel` (`money`, `civil`, erros tipados), `platform/clock` | F0.2 | — | — | ↪ movido: erros, envelope e decode para **F1.1**; headers de segurança para **F1.2**; paginação para **F2.2**; `clock` para **F1.1** (expiração de sessão); `money` para **F2.2**; `civil` para **F2.2** |
+| F0.4 | `sqlc.yaml`, `TxManager` e testes de TxManager | F0.3 | stores gerados por módulo; transação via contexto | `make gen` | ✅ entregue na F1 (`internal/<módulo>/store`, `platform/postgres/tx.go`); coberto pelos testes de integração |
+| F0.5 | Envelope de erro, decode JSON estrito, headers de segurança, `kernel/errors`, `platform/clock` | F0.2 | mapeamento de erros e decode testados | `go test ./internal/platform/httpx/...` | ✅ entregue na F1. Paginação keyset ↪ **F2.2**; `money`/`civil` ↪ **F2.2** |
 | F0.6 | `apps/web`: Next.js 16.4 (App Router, TS), export estático só no build e rewrites só em dev (`next.config.ts` por fase), Tailwind 4, shadcn/ui (`button`), ESLint + Prettier + `tsc`, Vitest; página inicial pt-BR com status da API | F0.1 | `pnpm build` gera `out/`; testes do componente de status passam | `make lint-web test-web build` | ✅ (`lib/money.ts` ↪ **F2.4**, primeiro formulário com valor) |
-| F0.7 | `docs/openapi.yaml` inicial + `make gen` (sqlc + `openapi-typescript`) | F1.1 | `make gen` idempotente | `make gen && git diff --exit-code` | ⏳ junto com F1.1 (primeira rota com contrato além do health) |
+| F0.7 | `docs/openapi.yaml` + `make gen` (sqlc + `openapi-typescript`) | F1.1 | `make gen` idempotente; CI falha se o código gerado divergir | `make gen` | ✅ entregue na F1; respostas dos testes de API validadas contra o contrato (kin-openapi) |
 | F0.8 | Dockerfile da API (multi-stage, distroless estático, não-root, 15 MB) + `make up` com `--wait` | F0.3 | Clone limpo + `make setup && make up`: `curl 127.0.0.1:8090/health` 200; portas só em 127.0.0.1 | `make up` | ✅ O web roda no host (`make web`). No Compose ele entra com o Caddy de produção em **F8.2**, porque um container Node com bind mount gravaria arquivos como root no repositório |
-| F0.9 | CI (GitHub Actions, `.github/workflows/ci.yml`): job **api** (`make lint-go`, `go mod tidy -diff`, `make test-go` com Testcontainers, `docker build`) e job **web** (`make lint-web`, `make test-web`, build estático), rodando os mesmos alvos do Makefile | F0.8 | Pipeline verde em push/PR para `main` | push | 🟡 workflow criado e passos validados localmente; falta a primeira execução no GitHub |
+| F0.9 | CI (GitHub Actions, `.github/workflows/ci.yml`): job **api** (`make lint-go`, `go mod tidy -diff`, `make test-go` com Testcontainers, `docker build`) e job **web** (`make lint-web`, `make test-web`, build estático), rodando os mesmos alvos do Makefile | F0.8 | Pipeline verde em push/PR para `main` | push | ✅ verde no GitHub (PR #1, run 42815181348) |
 
 ### F1 — Identidade e família
 
-| ID | Tarefa | Dep. | Aceite | Verificar |
-|---|---|---|---|---|
-| F1.1 | Itens movidos da F0 (`kernel/errors`, envelope de erro + decode estrito, `platform/clock`, `sqlc.yaml` + `TxManager`, `openapi.yaml` + `make gen`, `make migrate-new`). Migration `users`/`sessions`; hasher Argon2id (PHC, rehash); `register`, `login`, `logout`, `me`; cookie de sessão; rate limit de login; `REGISTRATION_ENABLED` | F0.1–F0.3, F0.6, F0.8 | Sessão inválida, revogada ou expirada → 401; cookie com flags corretas por ambiente; e-mail inexistente e senha errada dão a mesma resposta; senha nunca aparece em log | `make test` |
-| F1.2 | Middleware CSRF (Origin/Sec-Fetch-Site + content-type) | F1.1 | POST com Origin estranho → 403; GET não é afetado | `make test` |
-| F1.3 | Migration `audit_events` + `platform/audit.Recorder` (na transação) | F0.4 | Evento gravado só em caso de commit (teste de rollback) | `make test` |
-| F1.4 | Migration `households`/`members`/`invites`; criar e listar famílias; `GET/PATCH /households/:id` (PATCH só OWNER); `RequireMember`/`RequireOwner` | F1.1, F1.3 | Não-membro → 404; MEMBER no PATCH → 403; criador vira OWNER | `make test` |
-| F1.5 | Migration `categories` + módulo `categories` (CRUD, arquivar, 2 níveis, `kind` coerente) + seed pt-BR na criação da família | F1.4 | RN-022: arquivar categoria referenciada preserva histórico; pai de outra família → 422; família nova já vem com categorias padrão | `make test` |
-| F1.6 | Convites (criar, aceitar, revogar), listar membros, desativar membro (≥ 1 OWNER), aceite de convite no cadastro com registro fechado | F1.4 | Token só em hash; expirado/usado/revogado → 422; T16 (membro desativado perde acesso e o histórico é preservado) | `make test` |
-| F1.7 | Suíte de isolamento table-driven (ADR 0006) com rotas F1; cresce a cada fase | F1.4 | Teste falha se uma rota `/households/{id}` não estiver na suíte | `make test` |
-| F1.8 | Web: layout (bottom nav/sidebar), login, cadastro, onboarding, seleção de família, aceitar convite, membros e categorias em Configurações | F1.6, F0.7 | E2E: A cadastra → cria família → gera convite → B aceita → B vê a família | `make e2e` |
+**Entrega 2 (2026-11-10):** F1.1–F1.4, F1.6, F1.7 e F1.8 (sem E2E) concluídas. F1.5 (categorias) ficou para a próxima entrega: é catálogo das funcionalidades financeiras e não fazia parte do escopo pedido.
+
+| ID | Tarefa | Dep. | Aceite | Verificar | Status |
+|---|---|---|---|---|---|
+| F1.1 | Itens movidos da F0 (`kernel/errors`, envelope de erro + decode estrito, `platform/clock`, `sqlc.yaml` + `TxManager`, `openapi.yaml` + `make gen`, `make migrate-new`). Migration `users`/`sessions`; hasher Argon2id (PHC, rehash); `register`, `login`, `logout`, `me`; cookie de sessão; rate limit de login; `REGISTRATION_ENABLED` | F0.1–F0.3, F0.6, F0.8 | Sessão inválida, revogada ou expirada → 401; cookie com flags corretas por ambiente; e-mail inexistente e senha errada dão a mesma resposta; senha nunca aparece em log | `make test` | ✅ |
+| F1.2 | Middleware CSRF (Origin/Sec-Fetch-Site + content-type) | F1.1 | POST com Origin estranho → 403; GET não é afetado | `make test` | ✅ |
+| F1.3 | Migration `audit_events` + `platform/audit.Recorder` (na transação) | F0.4 | Evento gravado só em caso de commit (teste de rollback) | `make test` | ✅ |
+| F1.4 | Migration `households`/`members`/`invites`; criar e listar famílias; `GET/PATCH /households/:id` (PATCH só OWNER); `RequireMember`/`RequireOwner` | F1.1, F1.3 | Não-membro → 404; MEMBER no PATCH → 403; criador vira OWNER | `make test` | ✅ |
+| F1.5 | Migration `categories` + módulo `categories` (CRUD, arquivar, 2 níveis, `kind` coerente) + seed pt-BR na criação da família | F1.4 | RN-022: arquivar categoria referenciada preserva histórico; pai de outra família → 422; família nova já vem com categorias padrão | `make test` | ⏳ próxima entrega (seed pt-BR será ligado à criação da família) |
+| F1.6 | Convites (criar, aceitar, revogar), listar membros, desativar membro (≥ 1 OWNER), aceite de convite no cadastro com registro fechado | F1.4 | Token só em hash; expirado/usado/revogado → 422; T16 (membro desativado perde acesso e o histórico é preservado) | `make test` | ✅ (+ `casvuno admin reset-password`, I-12) |
+| F1.7 | Suíte de isolamento table-driven (ADR 0006) com rotas F1; cresce a cada fase | F1.4 | Teste falha se uma rota `/households/{id}` não estiver na suíte | `make test` | ✅ (`internal/app/households_integration_test.go`) |
+| F1.8 | Web: layout (bottom nav/sidebar), login, cadastro, onboarding, seleção de família, aceitar convite, membros e categorias em Configurações | F1.6, F0.7 | E2E: A cadastra → cria família → gera convite → B aceita → B vê a família | `make e2e` | 🟡 telas entregues e testadas com Vitest; E2E Playwright pendente |
 
 ### F2 — Contas, idempotência e transferências
 
@@ -207,10 +209,10 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 
 | # | Migration | Tarefa |
 |---|---|---|
-| 000001 | extensions (`citext`) | F0.3 |
-| 000002 | users, sessions | F1.1 |
-| 000003 | audit_events | F1.3 |
-| 000004 | households, household_members, household_invites | F1.4 |
+| 000001 | extensions (`citext`) | F0.3 ✅ |
+| 000002 | users, sessions | F1.1 ✅ |
+| 000003 | households, household_members, household_invites | F1.4 ✅ |
+| 000004 | audit_events (append-only por trigger; FK para households) | F1.3 ✅ |
 | 000005 | categories | F1.5 |
 | 000006 | idempotency_keys | F2.1 |
 | 000007 | accounts, account_movements, transfers | F2.2 |

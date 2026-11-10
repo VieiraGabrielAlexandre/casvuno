@@ -1,0 +1,496 @@
+openapi: 3.1.0
+info:
+  title: Casvuno API
+  version: 0.2.0
+  description: |
+    API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
+    Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
+    Requisições que alteram estado devem vir da origem do app (`Origin`), caso contrário recebem 403 `CROSS_ORIGIN_REQUEST`.
+    Rotas sob `/households/{householdId}` exigem membership ativa: quem não é membro recebe 404.
+servers:
+  - url: /
+
+tags:
+  - name: health
+  - name: auth
+  - name: households
+  - name: invites
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Disponibilidade da API e do banco
+      security: []
+      responses:
+        "200":
+          description: API e banco disponíveis
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: Banco indisponível
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Cadastrar usuário e iniciar sessão
+      description: Com `REGISTRATION_ENABLED=false`, só é aceito com `inviteToken` válido.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Usuário criado; cookie de sessão definido
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SessionCookie" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Autenticar e iniciar sessão
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Autenticado; cookie de sessão definido
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SessionCookie" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Revogar a sessão atual
+      security: []
+      responses:
+        "204": { description: Sessão revogada e cookie removido }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: Usuário autenticado
+      description: As famílias do usuário ficam em `GET /api/v1/households`. A sessão é renovada (expiração deslizante) quando usada.
+      responses:
+        "200":
+          description: Usuário da sessão
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households:
+    get:
+      tags: [households]
+      operationId: listHouseholds
+      summary: Famílias em que o usuário é membro ativo
+      responses:
+        "200":
+          description: Famílias
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HouseholdList" }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [households]
+      operationId: createHousehold
+      summary: Criar família (o criador vira OWNER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateHouseholdRequest" }
+      responses:
+        "201":
+          description: Família criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Household" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+    get:
+      tags: [households]
+      operationId: getHousehold
+      summary: Detalhes da família
+      responses:
+        "200":
+          description: Família
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Household" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [households]
+      operationId: updateHousehold
+      summary: Editar nome e/ou fuso (OWNER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateHouseholdRequest" }
+      responses:
+        "200":
+          description: Família atualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Household" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/members:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+    get:
+      tags: [households]
+      operationId: listMembers
+      summary: Membros ativos e inativos
+      responses:
+        "200":
+          description: Membros
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemberList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/members/{memberId}:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - name: memberId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [households]
+      operationId: deactivateMember
+      summary: Desativar membro (OWNER). O histórico é preservado.
+      responses:
+        "204": { description: Membro desativado }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/invites:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+    get:
+      tags: [invites]
+      operationId: listInvites
+      summary: Convites pendentes (OWNER)
+      responses:
+        "200":
+          description: Convites pendentes (sem tokens)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InviteList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [invites]
+      operationId: createInvite
+      summary: Criar convite de uso único (OWNER)
+      description: O token e o link são retornados apenas nesta resposta; o banco guarda só o hash.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInviteRequest" }
+      responses:
+        "201":
+          description: Convite criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedInvite" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/invites/{inviteId}:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - name: inviteId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [invites]
+      operationId: revokeInvite
+      summary: Revogar convite pendente (OWNER)
+      responses:
+        "204": { description: Convite revogado }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/invites/accept:
+    post:
+      tags: [invites]
+      operationId: acceptInvite
+      summary: Aceitar convite e entrar na família como MEMBER
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptInviteRequest" }
+      responses:
+        "200":
+          description: Membership criada (ou reativada)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Household" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+security:
+  - sessionCookie: []
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: casvuno_session
+
+  parameters:
+    HouseholdId:
+      name: householdId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  headers:
+    SessionCookie:
+      description: Cookie de sessão HttpOnly, SameSite=Lax, Path=/ (Secure sob HTTPS).
+      schema: { type: string }
+
+  responses:
+    Error:
+      description: Erro no envelope padrão
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+        checks:
+          type: object
+          additionalProperties: false
+          required: [database]
+          properties:
+            database: { type: string, enum: [ok, unavailable] }
+
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code: { type: string, examples: [VALIDATION_ERROR] }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [field, reason]
+                properties:
+                  field: { type: string }
+                  reason: { type: string }
+            requestId: { type: string }
+
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, name, email]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [name, email, password]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 10, maxLength: 128 }
+        inviteToken: { type: string, maxLength: 128 }
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, maxLength: 254 }
+        password: { type: string }
+
+    Role:
+      type: string
+      enum: [OWNER, MEMBER]
+
+    Household:
+      type: object
+      additionalProperties: false
+      required: [id, name, timezone, currency, createdAt, memberId, role]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        timezone: { type: string, examples: [America/Sao_Paulo] }
+        currency: { type: string, enum: [BRL] }
+        createdAt: { type: string, format: date-time }
+        memberId:
+          type: string
+          format: uuid
+          description: Membership do usuário autenticado nesta família
+        role: { $ref: "#/components/schemas/Role" }
+
+    HouseholdList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Household" }
+
+    CreateHouseholdRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        timezone:
+          type: string
+          maxLength: 64
+          description: Fuso IANA; padrão America/Sao_Paulo
+
+    UpdateHouseholdRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        timezone: { type: string, maxLength: 64 }
+
+    Member:
+      type: object
+      additionalProperties: false
+      required: [id, userId, name, email, role, status, joinedAt]
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: "#/components/schemas/Role" }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        joinedAt: { type: string, format: date-time }
+
+    MemberList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Member" }
+
+    Invite:
+      type: object
+      additionalProperties: false
+      required: [id, email, expiresAt, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        email:
+          type: [string, "null"]
+          description: Informativo; o token é a credencial (I-12)
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+
+    InviteList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Invite" }
+
+    CreatedInvite:
+      type: object
+      additionalProperties: false
+      required: [id, email, expiresAt, createdAt, token, url]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: [string, "null"] }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        token:
+          type: string
+          description: Exibido uma única vez
+        url:
+          type: string
+          description: Link para compartilhar (`APP_ORIGIN/invite?token=…`)
+
+    CreateInviteRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+
+    AcceptInviteRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: { type: string, minLength: 1, maxLength: 128 }

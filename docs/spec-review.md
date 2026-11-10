@@ -48,6 +48,7 @@
 | I-30 | §7.1 | Não há endpoint de troca de papel nem garantia de pelo menos um OWNER. | Invariante: a família tem sempre ≥ 1 OWNER ativo (desativar o último OWNER → 422). Sem troca de papel na V1. | 0006 |
 | I-29 | RN-024 | Exclusão de família sem rota nem procedimento. | Fora da V1: procedimento de operador documentado em `docs/deployment.md`, sem endpoint. | 0012 |
 | I-20 | §3, §7 | "Mutação financeira exige Idempotency-Key" sem lista de rotas, sem tratar chaves concorrentes e sem dizer se falhas são persistidas. | Lista fechada de rotas no ADR 0007. A chave é gravada **na mesma transação SQL** da operação: concorrentes esperam pelo índice único e recebem replay; falhas fazem rollback e permitem nova tentativa. Retenção de 7 dias. | 0007 |
+| I-39 | §7.1 `/auth/me` | O README diz "Perfil e famílias", mas compor famílias em `identity` obrigaria esse módulo a depender de `households` (ADR 0001). | `GET /auth/me` retorna só o usuário; o web busca `GET /households` em seguida (uma requisição a mais, sem acoplamento). | 0005 |
 | I-31 | §7.4 | Os health endpoints aparecem junto com rotas `/api/v1`. | `GET /health` na raiz da API (readiness com checagem do banco), sem versão, sem autenticação e sem dados sensíveis. | 0012 |
 
 ## E. Arquitetura e plataforma

@@ -14,20 +14,54 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/households"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/identity"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/audit"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/clock"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/config"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/logging"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/postgres"
 )
 
-// Module wires the platform. Business modules are added here as they are implemented.
+// Module wires the platform and the business modules. Tests may replace the clock and the
+// password parameters with fx.Decorate.
 var Module = fx.Options(
 	fx.Provide(
 		logging.New,
 		newPool,
+		postgres.NewTxManager,
+		audit.NewRecorder,
+		func() clock.Clock { return clock.System{} },
+		func() identity.Argon2Params { return identity.DefaultArgon2Params },
 		newRouter,
 		newHTTPServer,
 	),
+	identityModule,
+	householdsModule,
 	fx.Invoke(func(*http.Server) {}), // the server is the root of the object graph
+)
+
+var identityModule = fx.Module("identity",
+	fx.Provide(
+		identity.NewPasswordHasher,
+		func(tx *postgres.TxManager, clk clock.Clock, h *identity.PasswordHasher, inv identity.InviteChecker, cfg config.Config) *identity.Service {
+			return identity.NewService(tx, clk, h, inv, cfg.RegistrationEnabled)
+		},
+		func(svc *identity.Service, clk clock.Clock, log *slog.Logger, cfg config.Config) *identity.Handler {
+			return identity.NewHandler(svc, clk, log, cfg.SecureCookies())
+		},
+	),
+)
+
+var householdsModule = fx.Module("households",
+	fx.Provide(
+		func(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, cfg config.Config) *households.Service {
+			return households.NewService(tx, clk, rec, cfg.AppOrigin)
+		},
+		households.NewHandler,
+		// households implements the consumer-defined identity.InviteChecker.
+		func(s *households.Service) identity.InviteChecker { return s },
+	),
 )
 
 // New builds the application for the given configuration.

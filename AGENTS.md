@@ -32,6 +32,7 @@ Casvuno é uma aplicação web/PWA de gestão financeira **familiar**: um monól
 
 - Layout: `apps/api/internal/<módulo>`. `go.uber.org/fx` **só** em `internal/app` e `cmd/`. Módulos não importam outros módulos de negócio; a comunicação é por interfaces pequenas **definidas pelo consumidor** e ligadas no composition root (`fx.As`).
 - `domain/` é puro: sem IO, sem `time.Now()` (use `clock.Clock`), sem `context` de banco, sem HTTP/SQL/fx.
+- Rotas de família usam `households.RequireMember` (e `RequireOwner`); o handler lê `authctx.MembershipFrom(ctx)`. Toda rota nova sob `/households/{householdId}` entra em `householdRoutes` (suíte de isolamento).
 - Casos de uso recebem `context.Context` e um `householdID` já autorizado, e devolvem erros de `kernel` (`ErrValidation`, `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrInvariant`), com `%w` para contexto.
 - Operações com mais de uma escrita usam `TxRunner.WithinTx`. Locks com `SELECT … FOR UPDATE` conforme o ADR 0007. Auditoria e idempotência na mesma transação.
 - SQL explícito em `db/queries/<módulo>.sql` com sqlc. Sem ORM, sem `Repository[T]`, sem SQL concatenado.
@@ -96,8 +97,10 @@ make test-unit      # só testes sem Docker
 make lint           # golangci-lint + gofmt/goimports + eslint + prettier + tsc
 make fmt | build
 make migrate-up | migrate-down [N=1]
+make migrate-new name=snake_case   # par up/down sequencial
+make gen            # sqlc + cliente TS a partir de docs/openapi.yaml (commite o resultado)
 ```
-Previstos no plano (ainda não existem): `gen`, `migrate-new`, `seed`, `e2e`, `backup`, `restore-test`, `check-invariants`.
+Previstos no plano (ainda não existem): `seed`, `e2e`, `backup`, `restore-test`, `check-invariants`.
 
 ## 10. Honestidade e relato
 

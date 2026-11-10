@@ -31,17 +31,52 @@ func TestLoadFromDefaults(t *testing.T) {
 
 func TestLoadFromOverrides(t *testing.T) {
 	cfg, err := LoadFrom(lookupFrom(map[string]string{
-		"APP_ENV":          "production",
-		"HTTP_ADDR":        ":9000",
-		"DATABASE_URL":     "postgresql://u:p@db/casvuno",
-		"LOG_LEVEL":        "debug",
-		"SHUTDOWN_TIMEOUT": "3s",
+		"APP_ENV":              "production",
+		"HTTP_ADDR":            ":9000",
+		"DATABASE_URL":         "postgresql://u:p@db/casvuno",
+		"LOG_LEVEL":            "debug",
+		"SHUTDOWN_TIMEOUT":     "3s",
+		"APP_ORIGIN":           "https://casvuno.example/",
+		"REGISTRATION_ENABLED": "false",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !cfg.IsProduction() || cfg.HTTPAddr != ":9000" || cfg.LogLevel != slog.LevelDebug || cfg.ShutdownTimeout != 3*time.Second {
 		t.Fatalf("overrides not applied: %+v", cfg)
+	}
+	if cfg.AppOrigin != "https://casvuno.example" || !cfg.SecureCookies() || cfg.RegistrationEnabled {
+		t.Fatalf("origin/registration not applied: %+v", cfg)
+	}
+}
+
+func TestLoadFromDefaultsAreDevFriendly(t *testing.T) {
+	cfg, err := LoadFrom(lookupFrom(map[string]string{"DATABASE_URL": "postgres://u:p@localhost/db"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AppOrigin != "http://localhost:3000" || cfg.SecureCookies() || !cfg.RegistrationEnabled {
+		t.Fatalf("unexpected dev defaults: %+v", cfg)
+	}
+}
+
+func TestLoadFromRejectsInvalidOrigins(t *testing.T) {
+	for _, tc := range []struct{ env, origin, want string }{
+		{"development", "localhost:3000", "APP_ORIGIN must be an origin"},
+		{"development", "http://localhost:3000/app", "APP_ORIGIN must be an origin"},
+		{"development", "ftp://example.com", "APP_ORIGIN must be an origin"},
+		{"production", "http://casvuno.example", "APP_ORIGIN must use https in production"},
+	} {
+		_, err := LoadFrom(lookupFrom(map[string]string{
+			"APP_ENV": tc.env, "APP_ORIGIN": tc.origin, "DATABASE_URL": "postgres://u:p@localhost/db",
+		}))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s %q: got %v, want %q", tc.env, tc.origin, err, tc.want)
+		}
+	}
+	_, err := LoadFrom(lookupFrom(map[string]string{"DATABASE_URL": "postgres://u:p@localhost/db", "REGISTRATION_ENABLED": "maybe"}))
+	if err == nil || !strings.Contains(err.Error(), "REGISTRATION_ENABLED") {
+		t.Errorf("got %v", err)
 	}
 }
 

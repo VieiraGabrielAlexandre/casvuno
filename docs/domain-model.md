@@ -32,8 +32,11 @@ Grafo de dependência (acíclico): `accounts ← cards ← ledger ← recurrence
 
 | Tabela | Mudança |
 |---|---|
-| `household_members` | `status ACTIVE \| INACTIVE` (sem `INVITED`). |
-| `household_invites` | `email NULL` (informativo); `max 1 uso`; expira em 7 dias. |
+| `users` | `email citext UNIQUE` (normalizado em minúsculas); sem `user_agent_hash` em `sessions` (sem uso na V1). |
+| `sessions` | `token_hash bytea` (SHA-256), `expires_at` deslizante + `absolute_expires_at` (ADR 0005). |
+| `household_members` | `status ACTIVE \| INACTIVE` (sem `INVITED`); `deactivated_at`; `UNIQUE(household_id, id)` para FKs compostas; reativação volta como `MEMBER`. |
+| `household_invites` | `email NULL` (informativo); uso único (`accepted_at`/`accepted_by_user_id`); `revoked_at`; expira em 7 dias; `invited_by_member_id` com FK composta. |
+| `audit_events` | `household_id NOT NULL`; append-only garantido por trigger. |
 | `categories` | `parent_id` só pode apontar para uma categoria sem pai, do mesmo `kind` e da mesma família. |
 | `accounts` | `opening_balance_cents` pode ser negativo. |
 | `account_movements` | Sem coluna de status. `kind ∈ {DIRECT_PAYMENT, DIRECT_RECEIPT, INVOICE_PAYMENT, TRANSFER, REVERSAL}` (sem `OPENING_ADJUSTMENT`). `reversal_of_id UNIQUE NULL`. |

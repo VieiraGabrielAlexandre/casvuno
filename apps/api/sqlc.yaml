@@ -1,0 +1,47 @@
+version: "2"
+
+# Schema comes from the golang-migrate files (down migrations are ignored by sqlc).
+# The first entry defines the shared Go settings (&go); the others reuse them.
+sql:
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/identity.sql
+    gen:
+      go: &go
+        package: store
+        out: internal/identity/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: uuid
+            nullable: true
+            go_type: { import: github.com/google/uuid, type: UUID, pointer: true }
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type: { type: time.Time, pointer: true }
+          - db_type: citext
+            go_type: string
+          - db_type: citext
+            nullable: true
+            go_type: { type: string, pointer: true }
+
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/households.sql
+    gen:
+      go:
+        <<: *go
+        out: internal/households/store
+
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/audit.sql
+    gen:
+      go:
+        <<: *go
+        out: internal/platform/audit/store
