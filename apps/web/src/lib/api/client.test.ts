@@ -37,6 +37,34 @@ describe("call", () => {
     });
   });
 
+  it("reports an unavailable server when the proxy answers 5xx without an envelope", async () => {
+    for (const status of [500, 502, 503, 504]) {
+      const res = new Response("Internal Server Error", { status });
+      const err = await call(
+        Promise.resolve({ error: "Internal Server Error", response: res }),
+      ).catch((e: unknown) => e);
+      expect(err).toMatchObject({ status, code: "SERVER_UNAVAILABLE" });
+      expect((err as Error).message).toMatch(/indisponível/);
+    }
+  });
+
+  it("keeps the API message for 5xx errors inside the envelope", async () => {
+    const envelope = {
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "Erro interno.",
+        requestId: "r",
+      },
+    };
+    const err = await call(
+      Promise.resolve({ error: envelope, response: json(500, envelope) }),
+    ).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      code: "INTERNAL_ERROR",
+      message: "Erro interno.",
+    });
+  });
+
   it("never reports success when the network fails (offline)", async () => {
     const err = await call(
       Promise.reject(new TypeError("Failed to fetch")),

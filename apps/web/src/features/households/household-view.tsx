@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { FormError } from "@/components/form-field";
@@ -41,6 +42,12 @@ export function HouseholdView({ id }: { id: string }) {
         <p className="text-sm text-muted-foreground">
           Você é {roleLabel[h.role].toLowerCase()} · fuso {h.timezone}
         </p>
+        <Link
+          href={`/categories?household=${h.id}`}
+          className="self-start text-sm underline"
+        >
+          Categorias
+        </Link>
       </div>
       <Members household={h} />
       {isOwner && <Invites householdId={h.id} />}

@@ -37,7 +37,7 @@ Grafo de dependência (acíclico): `accounts ← cards ← ledger ← recurrence
 | `household_members` | `status ACTIVE \| INACTIVE` (sem `INVITED`); `deactivated_at`; `UNIQUE(household_id, id)` para FKs compostas; reativação volta como `MEMBER`. |
 | `household_invites` | `email NULL` (informativo); uso único (`accepted_at`/`accepted_by_user_id`); `revoked_at`; expira em 7 dias; `invited_by_member_id` com FK composta. |
 | `audit_events` | `household_id NOT NULL`; append-only garantido por trigger. |
-| `categories` | `parent_id` só pode apontar para uma categoria sem pai, do mesmo `kind` e da mesma família. |
+| `categories` | `parent_id` só pode apontar para uma categoria sem pai, ativa, do mesmo `kind` e da mesma família (FK composta + regra no serviço). Nome único entre irmãos ativos (índice parcial, `lower(name)`). Nunca apagada: `is_active=false`. No máximo 200 por família. Criadas com a família (49 padrões pt-BR, `internal/categories/defaults.go`). |
 | `accounts` | `opening_balance_cents` pode ser negativo. |
 | `account_movements` | Sem coluna de status. `kind ∈ {DIRECT_PAYMENT, DIRECT_RECEIPT, INVOICE_PAYMENT, TRANSFER, REVERSAL}` (sem `OPENING_ADJUSTMENT`). `reversal_of_id UNIQUE NULL`. |
 | `transfers` | Coluna `description` adicionada. |

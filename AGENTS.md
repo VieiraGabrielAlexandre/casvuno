@@ -32,7 +32,8 @@ Casvuno é uma aplicação web/PWA de gestão financeira **familiar**: um monól
 
 - Layout: `apps/api/internal/<módulo>`. `go.uber.org/fx` **só** em `internal/app` e `cmd/`. Módulos não importam outros módulos de negócio; a comunicação é por interfaces pequenas **definidas pelo consumidor** e ligadas no composition root (`fx.As`).
 - `domain/` é puro: sem IO, sem `time.Now()` (use `clock.Clock`), sem `context` de banco, sem HTTP/SQL/fx.
-- Rotas de família usam `households.RequireMember` (e `RequireOwner`); o handler lê `authctx.MembershipFrom(ctx)`. Toda rota nova sob `/households/{householdId}` entra em `householdRoutes` (suíte de isolamento).
+- Rotas de família: o módulo expõe `Routes(r)` com caminhos relativos (ex.: `/categories`) e `internal/app/router.go` as monta dentro de `/households/{householdId}`, já protegidas por `households.RequireMember` (use `households.RequireOwner` para ações administrativas). O handler lê `authctx.MembershipFrom(ctx)`. Toda rota nova sob `/households/{householdId}` entra em `householdRoutes` (suíte de isolamento); o teste de cobertura falha caso contrário.
+- Textos para o usuário ficam em pt-BR dentro de strings; o `misspell` só verifica comentários.
 - Casos de uso recebem `context.Context` e um `householdID` já autorizado, e devolvem erros de `kernel` (`ErrValidation`, `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrInvariant`), com `%w` para contexto.
 - Operações com mais de uma escrita usam `TxRunner.WithinTx`. Locks com `SELECT … FOR UPDATE` conforme o ADR 0007. Auditoria e idempotência na mesma transação.
 - SQL explícito em `db/queries/<módulo>.sql` com sqlc. Sem ORM, sem `Repository[T]`, sem SQL concatenado.
@@ -75,13 +76,13 @@ Casvuno é uma aplicação web/PWA de gestão financeira **familiar**: um monól
 ## 8. Definição de pronto
 
 Uma tarefa só está pronta quando:
-1. A regra está implementada e coberta por testes (unitário de domínio + integração com PostgreSQL real; E2E quando a tarefa for de UI).
+1. A regra está implementada e coberta por testes (unitário de domínio + integração com PostgreSQL real; UI com Vitest). **E2E (Playwright) fica concentrado na F8.5** por decisão de 2026-11-10: não crie E2E antes disso, mas anote em `implementation-status.md` os fluxos de UI que a F8.5 deve cobrir.
 2. Migration tem `up`/`down` e o ciclo up/down/up passa.
 3. Autorização e validação estão corretas, e a suíte de isolamento foi atualizada.
 4. `docs/openapi.yaml` e o cliente gerado estão atualizados.
 5. A UI (quando houver) usa a API real, sem mocks, com estados de carregando, vazio, erro e sucesso.
 6. Logs e auditoria estão adequados.
-7. `make lint` e `make test` passam (e `make e2e` quando aplicável).
+7. `make lint` e `make test` passam.
 8. `docs/implementation-status.md` está atualizado.
 
 ## 9. Comandos

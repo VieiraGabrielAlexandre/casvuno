@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F1 — Identidade e família: **entrega 2 concluída** (2026-11-10), exceto F1.5 (categorias) e o E2E da F1.8. **Parado aguardando revisão.**
+F1 — Identidade e família **concluída** (entrega 3, 2026-11-10; ainda não commitada). Próxima: F2.
 
 ## Concluído
 
@@ -68,12 +68,32 @@ Correções feitas durante a verificação: o golangci-lint precisou ser compila
 | `make up` + `make web` + curl pelo proxy :3000 | cadastro 201 (cookie HttpOnly, Path=/) → família 201 (OWNER) → convite 201 → 2º usuário aceita 200 (MEMBER) → MEMBER cria convite 403 → membros 200 → 3º usuário lê família alheia 404 → POST com Origin estranho 403 → sem cookie 401 → páginas `/ /login /register /onboarding /household /invite` 200 |
 | `printf … \| compose run --rm -T api admin reset-password --email …` | senha antiga → 401, nova → 200 |
 
+### 2026-11-10 — Entrega 3: categorias (F1.5) e mensagem de API indisponível
+- **Banco:** `000005_categories` (2 níveis via FK composta, nome único entre irmãos ativos por índice parcial, `CHECK` de cor `#RRGGBB`, `UNIQUE(household_id, id)` para FKs futuras).
+- **Módulo `categories`:** listar (filtro `kind`, `includeArchived`), criar (principal ou subcategoria: mesmo tipo, principal ativa, sem 3º nível, pai de outra família → 422 `PARENT_NOT_FOUND`), editar (nome, ícone, cor, ordem; tipo e principal imutáveis), arquivar e restaurar (arquivar a principal arquiva as filhas; restaurar filha exige principal ativa); `DELETE` = arquivar (idempotente); limite de 200; auditoria `category.created/updated/archived/restored`; qualquer membro ativo gerencia. 49 categorias padrão pt-BR criadas na mesma transação da família, via interface `households.CategorySeeder` (sem auditoria por item).
+- **Router:** `/households/{householdId}` montado uma vez em `internal/app/router.go` (`households.ScopedRoutes` + `categories.Routes`).
+- **Web:** página `/categories?household=…` (árvore por tipo, nova categoria com seleção de principal, arquivar/restaurar, mostrar arquivadas) + link na página da família. Cliente: 5xx sem envelope (proxy sem API) → `SERVER_UNAVAILABLE` "O servidor está indisponível no momento…". `make web` avisa quando `/health` não responde.
+- **Lint:** `misspell` passou a verificar só comentários (as strings são pt-BR).
+- **Docs:** `spec-review` I-40, plano (F1.5 ✅), `domain-model`, ADR 0001 (montagem das rotas por família), AGENTS.md, OpenAPI 0.3.0.
+
+## Comandos executados (entrega 3) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test -race -tags integration ./internal/app/` | 1ª execução: 1 falha **real** (PATCH com `"color": ""` para remover a cor era barrado pela tag `len=7`); corrigida. Depois 23/23 ok, incluindo 4 testes novos de categorias e a suíte de isolamento com as 4 rotas novas (+ pai de outra família → 422, nenhuma linha alterada) |
+| `make lint` | 1ª execução: 1 warning ESLint (`form.watch` × React Compiler → `useWatch`) e 4 falsos positivos do `misspell` em palavras pt-BR; corrigidos. Depois 0 issues |
+| `make test` | 6 pacotes Go ok; Vitest 18/18 (novos: árvore de categorias, 5xx sem envelope → indisponível, 5xx com envelope mantém a mensagem) |
+| `go mod tidy -diff` | limpo |
+| `make gen` ×2 | idempotente |
+| `make build` | ok; export estático com 9 rotas (nova `/categories`) |
+| `make up` + `make web` + curl pelo proxy | migration 5 aplicada; família nova com 49 categorias (12 principais de despesa, 5 de receita); subcategoria 201; arquivar 204; `/categories` 200 |
+| API parada (`compose stop api`) | proxy do Next responde `500 Internal Server Error` em texto puro (caso que o cliente agora traduz); `make web` imprime o AVISO; API religada e saudável |
+
 ## Próxima tarefa
-F1.5 (categorias + seed pt-BR na criação da família) e o E2E Playwright da F1.8; em seguida F2 (idempotência, contas, transferências).
+F2.1 — idempotência (`idempotency_keys` + `platform/idempotency`, ADR 0007); depois F2.2 contas e F2.3 transferências.
 
 ## Pendências reais
-- **E2E (Playwright) ainda não existe:** o fluxo de UI foi verificado com Vitest e com o fluxo real via curl pelo proxy, mas não clicando num navegador. Entra com `make e2e` (F1.8).
-- **Categorias (F1.5)** não implementadas nesta entrega.
+- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair.
+- **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
 - **Sem limpeza de sessões e convites expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).
 - **Página de convite** não mostra o nome da família antes do aceite (não há rota pública de pré-visualização, de propósito, para não expor dados a quem só tem o link).

@@ -232,6 +232,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/households/{householdId}/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        /** Categorias da família (sem paginação; no máximo 200 por família) */
+        get: operations["listCategories"];
+        put?: never;
+        /** Criar categoria ou subcategoria (qualquer membro ativo) */
+        post: operations["createCategory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/categories/{categoryId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                categoryId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Arquivar categoria (nunca apaga; preserva o histórico, RN-022) */
+        delete: operations["archiveCategory"];
+        options?: never;
+        head?: never;
+        /**
+         * Renomear, reordenar, mudar ícone/cor, arquivar ou restaurar
+         * @description Tipo e categoria principal não mudam. `icon`/`color` vazios removem o valor. Arquivar a principal arquiva as subcategorias.
+         */
+        patch: operations["updateCategory"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -354,6 +398,46 @@ export interface components {
         };
         AcceptInviteRequest: {
             token: string;
+        };
+        /** @enum {string} */
+        CategoryKind: "EXPENSE" | "INCOME";
+        Category: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description Categoria principal (no máximo 2 níveis)
+             */
+            parentId: string | null;
+            name: string;
+            kind: components["schemas"]["CategoryKind"];
+            icon: string | null;
+            color: string | null;
+            isActive: boolean;
+            sortOrder: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        CategoryList: {
+            items: components["schemas"]["Category"][];
+        };
+        CreateCategoryRequest: {
+            name: string;
+            kind: components["schemas"]["CategoryKind"];
+            /** Format: uuid */
+            parentId?: string;
+            icon?: string;
+            color?: string;
+            sortOrder?: number;
+        };
+        UpdateCategoryRequest: {
+            name?: string;
+            icon?: string;
+            /** @description #RRGGBB, ou vazio para remover */
+            color?: string;
+            sortOrder?: number;
+            /** @description false arquiva; true restaura */
+            isActive?: boolean;
         };
     };
     responses: {
@@ -762,6 +846,123 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+        };
+    };
+    listCategories: {
+        parameters: {
+            query?: {
+                kind?: components["schemas"]["CategoryKind"];
+                includeArchived?: "true" | "false";
+            };
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Categorias ordenadas por tipo, ordem e nome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCategoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Categoria criada */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    archiveCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                categoryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Categoria arquivada (idempotente) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                categoryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCategoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Categoria atualizada */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
 }
