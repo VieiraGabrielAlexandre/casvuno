@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F0 — Fundação. Entrega 1 concluída em 2026-11-10 (F0.1, F0.2, F0.3, F0.6, F0.8). **Parado aguardando revisão.**
+F1 — Identidade e família: **entrega 2 concluída** (2026-11-10), exceto F1.5 (categorias) e o E2E da F1.8. **Parado aguardando revisão.**
 
 ## Concluído
 
@@ -43,12 +43,41 @@ Correções feitas durante a verificação: o golangci-lint precisou ser compila
 - `.gitignore` único na raiz (removido `apps/web/.gitignore`).
 - F0.9: `.github/workflows/ci.yml` criado. Passos executados localmente: `make lint` (0 issues), `go mod tidy -diff` (limpo), `make test` (3 pacotes Go ok, incluindo integração; Vitest 2/2), `docker build` ok, `pnpm --filter web build` ok. O YAML foi validado com `yaml.safe_load`; o `actionlint` não rodou (execução bloqueada pela política de permissões da sessão).
 
+- CI verde no GitHub: PR #1 (`feature/add-ci`, run 42815181348, sucesso em 2m38s), mesclado em `main` (commit `172b7a0`). O usuário também validou a execução local.
+- README sem backlog por sprint nem instruções para LLM (passaram para `AGENTS.md` e `docs/`).
+
+### 2026-11-10 — Entrega 2: autenticação, usuários e famílias (F1)
+- **Banco:** migrations `000002_identity` (users, sessions), `000003_households` (households, household_members, household_invites; FK composta do convidante), `000004_audit_events` (append-only por trigger).
+- **Plataforma (itens movidos da F0):** `kernel` (erros tipados), `platform/clock` (+ `Fake`), `platform/postgres/tx.go` (TxManager via contexto), `platform/httpx` (decode JSON estrito, envelope de erro com `requestId`, `X-Request-Id`, recover, headers de API, CSRF `SameOrigin`, 404/405 em JSON), `platform/authctx`, `platform/audit`, `platform/ratelimit`, `platform/securetoken`; sqlc v1.31.1 (`internal/<módulo>/store`); `docs/openapi.yaml` 3.1; `make gen`; `make migrate-new`.
+- **identity:** Argon2id em formato PHC com rehash no login; cadastro, login, logout e `/auth/me`; sessão opaca (hash SHA-256), cookie HttpOnly/SameSite=Lax (`__Host-` + Secure sob https), expiração deslizante de 30 dias com teto de 90 dias e renovação a cada 5 min; rate limit de login (5/min por IP e por e-mail); tempo igual para e-mail inexistente; `REGISTRATION_ENABLED` com exceção para convite válido; `casvuno admin reset-password` (revoga sessões).
+- **households:** criar, listar, ver e editar família (OWNER); membros; convites de uso único (7 dias, só hash no banco, link `APP_ORIGIN/invite?token=`), revogar e aceitar; desativar membro preservando histórico, com a regra de ≥ 1 OWNER (`LAST_OWNER`); reativação volta como MEMBER; `RequireMember` (não membro → 404) e `RequireOwner` (→ 403); auditoria na mesma transação.
+- **Web:** cliente tipado (`openapi-typescript` + `openapi-fetch`), TanStack Query, React Hook Form + Zod; páginas `/`, `/login`, `/register`, `/onboarding`, `/households`, `/household?id=`, `/invite?token=`; redirecionamento seguro `?next=`; erros da API nos campos; offline nunca vira sucesso. Removido o `ApiStatus` da entrega 1.
+- **CI:** cache de golangci-lint + sqlc; falha se o código sqlc ou o cliente TS divergirem do que foi commitado.
+- **Docs:** ADR 0005 (sessão deslizante, CSRF, `/auth/me`), ADR 0006 (implementado, suíte de isolamento), ADR 0008 (sqlc/TxManager), ADR 0012 (trigger de auditoria), `spec-review` I-39, `domain-model`, plano (F0.4/F0.5/F0.7/F1.x), README (primeiro acesso, senha esquecida), AGENTS.md.
+
+## Comandos executados (entrega 2) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test -race -tags integration ./internal/app/` | 18/18 ok: cadastro/login/me/logout, validações, credenciais inválidas sem revelar conta, rate limit (6ª tentativa → 429), 401 em rotas protegidas e cookie forjado, CSRF (3 variações → 403), sessão deslizante, expiração ociosa e absoluta (relógio falso), cadastro fechado só com convite válido, reset de senha, família, convites e papéis (MEMBER → 403 `OWNER_REQUIRED`), convite de uso único e revogado, desativação + `LAST_OWNER` + reativação, **isolamento entre famílias** (todas as rotas → 404 e nenhuma linha alterada), cobertura de rotas via `chi.Walk`, trilha de auditoria + trigger, migrations up/down/up; toda resposta validada contra `docs/openapi.yaml` |
+| 1ª execução da suíte acima | 2 falhas, ambas bugs dos testes (e-mail com maiúscula comparado sem normalizar; `MigrateDown(4)` em vez de 3), corrigidos |
+| `make lint` | 1ª execução: 6 achados (gofmt ×2, errorlint, gosec G115, G124 ×2), corrigidos; G124 com `nolint` justificado (o `Secure` do cookie segue `APP_ORIGIN`); depois 0 issues, ESLint, Prettier e `tsc` ok |
+| `make test` | 6 pacotes Go ok (app, identity, config, health, httpx, ratelimit); Vitest 14/14 (1ª execução: 2 falhas porque o `openapi-fetch` capturava `fetch` na importação; corrigido resolvendo `fetch` na chamada) |
+| `go mod tidy -diff` | limpo |
+| `make gen` ×2 (hash antes/depois) | idempotente |
+| `make build` | binário ok; imagem `casvuno-api:dev` 18,7 MB; export estático com 8 rotas |
+| `make up` + `make web` + curl pelo proxy :3000 | cadastro 201 (cookie HttpOnly, Path=/) → família 201 (OWNER) → convite 201 → 2º usuário aceita 200 (MEMBER) → MEMBER cria convite 403 → membros 200 → 3º usuário lê família alheia 404 → POST com Origin estranho 403 → sem cookie 401 → páginas `/ /login /register /onboarding /household /invite` 200 |
+| `printf … \| compose run --rm -T api admin reset-password --email …` | senha antiga → 401, nova → 200 |
+
 ## Próxima tarefa
-Confirmar o CI verde no GitHub depois do push; em seguida, F1.1 (que absorve os itens movidos da F0).
+F1.5 (categorias + seed pt-BR na criação da família) e o E2E Playwright da F1.8; em seguida F2 (idempotência, contas, transferências).
 
 ## Pendências reais
-- **Decisões de produto em aberto:** I-04, I-08, I-15, I-18, I-19 (`docs/spec-review.md`; afetam F3–F5). ADRs 0002, 0003, 0004, 0006, 0007, 0008, 0010, 0011 e 0012 continuam "Proposto".
-- **CI ainda não executado no GitHub:** as alterações desta preparação não foram commitadas.
+- **E2E (Playwright) ainda não existe:** o fluxo de UI foi verificado com Vitest e com o fluxo real via curl pelo proxy, mas não clicando num navegador. Entra com `make e2e` (F1.8).
+- **Categorias (F1.5)** não implementadas nesta entrega.
+- **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
+- **Sem limpeza de sessões e convites expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).
+- **Página de convite** não mostra o nome da família antes do aceite (não há rota pública de pré-visualização, de propósito, para não expor dados a quem só tem o link).
+- **Decisões de produto em aberto:** I-04, I-08, I-15, I-18, I-19 (`docs/spec-review.md`; afetam F3–F5). ADRs 0002, 0003, 0004, 0006, 0007, 0008, 0010, 0011 e 0012 continuam "Proposto"; o 0006 já está implementado e aguarda aceite formal.
 - **Web fora do Compose em dev** (decisão registrada no plano/ADR 0009). O web no Compose entra com o Caddy em F8.2.
 - **`apps/web/AGENTS.md`** é gerado e reinserido pelo `next dev`; mantido versionado.
 - O pnpm 12 marcou `sharp` e `unrs-resolver` como build não permitido (`allowBuilds: false`). O build e o lint funcionam sem eles; reavaliar se o ESLint import resolver precisar.

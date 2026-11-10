@@ -4,3 +4,4 @@ node_modules
 next-env.d.ts
 pnpm-lock.yaml
 AGENTS.md
+src/lib/api/schema.d.ts

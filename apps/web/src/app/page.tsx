@@ -1,13 +1,35 @@
-import { ApiStatus } from "@/components/api-status";
+"use client";
 
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+
+import { CenteredMessage } from "@/components/app-shell";
+import { useMe } from "@/features/auth/hooks";
+import { useHouseholds } from "@/features/households/hooks";
+import { errorMessage } from "@/lib/api/client";
+
+/** Entry point: sends the user to login, onboarding or their household. */
 export default function Home() {
+  const router = useRouter();
+  const me = useMe();
+  const households = useHouseholds(Boolean(me.data));
+
+  useEffect(() => {
+    if (me.data === null) {
+      router.replace("/login");
+      return;
+    }
+    const list = households.data;
+    if (!list) return;
+    if (list.length === 0) router.replace("/onboarding");
+    else if (list.length === 1) router.replace(`/household?id=${list[0].id}`);
+    else router.replace("/households");
+  }, [me.data, households.data, router]);
+
+  const error = me.error ?? households.error;
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-6 px-4 py-12">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Casvuno</h1>
-        <p className="text-muted-foreground">Gestão financeira familiar.</p>
-      </div>
-      <ApiStatus />
-    </main>
+    <CenteredMessage>
+      {error ? errorMessage(error) : "Carregando…"}
+    </CenteredMessage>
   );
 }

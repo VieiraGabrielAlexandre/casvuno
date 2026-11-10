@@ -27,17 +27,25 @@ jobs:
 
       # Same targets as local development. golangci-lint is built with the go.mod toolchain
       # (released binaries may target an older Go and refuse this module).
-      - name: Cache golangci-lint
-        id: lint-cache
+      - name: Cache Go tools (golangci-lint, sqlc)
+        id: tools-cache
         uses: actions/cache@v6
         with:
-          path: apps/api/bin/golangci-lint
-          key: golangci-lint-v2.15.0-${{ runner.os }}-${{ hashFiles('apps/api/go.mod') }}
+          path: |
+            apps/api/bin/golangci-lint
+            apps/api/bin/sqlc
+          key: go-tools-${{ runner.os }}-${{ hashFiles('apps/api/go.mod', 'Makefile') }}
 
-      # Restored files keep an old mtime; without this, make would rebuild the cached binary.
-      - name: Mark cached golangci-lint as up to date
-        if: steps.lint-cache.outputs.cache-hit == 'true'
-        run: touch apps/api/bin/golangci-lint
+      # Restored files keep an old mtime; without this, make would rebuild the cached binaries.
+      - name: Mark cached tools as up to date
+        if: steps.tools-cache.outputs.cache-hit == 'true'
+        run: touch apps/api/bin/golangci-lint apps/api/bin/sqlc
+
+      - name: Verify sqlc code is up to date
+        run: |
+          make apps/api/bin/sqlc
+          cd apps/api && bin/sqlc generate
+          git diff --exit-code -- internal || (echo "::error::run 'make gen' and commit the result" && exit 1)
 
       - name: Lint
         run: make lint-go
@@ -69,6 +77,11 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - name: Verify API client matches docs/openapi.yaml
+        run: |
+          pnpm --filter web gen:api
+          git diff --exit-code -- apps/web/src/lib/api || (echo "::error::run 'make gen' and commit the result" && exit 1)
 
       - name: Lint and typecheck
         run: make lint-web

@@ -6,10 +6,12 @@ PNPM             := corepack pnpm
 API_DIR          := apps/api
 GOLANGCI         := $(API_DIR)/bin/golangci-lint
 GOLANGCI_VERSION := v2.15.0
+SQLC             := $(API_DIR)/bin/sqlc
+SQLC_VERSION     := v1.31.1
 # Loads .env into the recipe's environment (for commands that run on the host).
 LOAD_ENV         := set -a && . ./.env && set +a
 
-.PHONY: help setup up down logs ps dev web api migrate-up migrate-down \
+.PHONY: help setup up down logs ps dev web api migrate-up migrate-down migrate-new gen \
         test test-unit test-go test-go-unit test-web lint lint-go lint-web fmt build
 
 help: ## List available targets
@@ -17,7 +19,7 @@ help: ## List available targets
 
 # --- Setup -------------------------------------------------------------------
 
-setup: .env $(GOLANGCI) ## Create .env, install web deps, download Go modules and tools
+setup: .env $(GOLANGCI) $(SQLC) ## Create .env, install web deps, download Go modules and tools
 	$(PNPM) install --frozen-lockfile
 	cd $(API_DIR) && go mod download
 
@@ -29,6 +31,10 @@ setup: .env $(GOLANGCI) ## Create .env, install web deps, download Go modules an
 $(GOLANGCI): $(API_DIR)/go.mod
 	cd $(API_DIR) && GOTOOLCHAIN=$$(go mod edit -json | sed -n 's/.*"Toolchain": "\(.*\)".*/\1/p') \
 		GOBIN=$$PWD/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
+	@touch $@
+
+$(SQLC): $(API_DIR)/go.mod
+	cd $(API_DIR) && GOBIN=$$PWD/bin go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
 	@touch $@
 
 # --- Run ---------------------------------------------------------------------
@@ -58,6 +64,15 @@ migrate-up: .env ## Apply pending migrations
 
 migrate-down: .env ## Revert the last migration (N=… to revert more)
 	$(COMPOSE) run --rm --build migrate migrate down $(or $(N),1)
+
+migrate-new: ## Create an empty up/down migration pair: make migrate-new name=add_things
+	infra/scripts/new-migration.sh $(API_DIR)/db/migrations "$(name)"
+
+# --- Code generation ---------------------------------------------------------
+
+gen: $(SQLC) ## Regenerate sqlc code and the typed web API client (commit the result)
+	cd $(API_DIR) && bin/sqlc generate
+	$(PNPM) --filter web gen:api
 
 # --- Quality -----------------------------------------------------------------
 

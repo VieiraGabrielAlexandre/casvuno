@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -24,10 +25,18 @@ type Config struct {
 	DatabaseURL     string
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
+	// AppOrigin is the web origin (scheme://host[:port]) that serves the UI and proxies the API.
+	// It is the only origin allowed on state-changing requests (CSRF, ADR 0005).
+	AppOrigin string
+	// RegistrationEnabled allows public sign-up; when false only invited users can register (I-13).
+	RegistrationEnabled bool
 }
 
 // IsProduction reports whether the process runs with production settings.
 func (c Config) IsProduction() bool { return c.Env == EnvProduction }
+
+// SecureCookies reports whether cookies must carry the Secure attribute (HTTPS origin).
+func (c Config) SecureCookies() bool { return strings.HasPrefix(c.AppOrigin, "https://") }
 
 // Load reads configuration from the process environment.
 func Load() (Config, error) { return LoadFrom(os.LookupEnv) }
@@ -73,6 +82,23 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 		errs = append(errs, errors.New("SHUTDOWN_TIMEOUT must be positive"))
 	default:
 		cfg.ShutdownTimeout = timeout
+	}
+
+	cfg.AppOrigin = strings.TrimSuffix(get("APP_ORIGIN", "http://localhost:3000"), "/")
+	if u, err := url.Parse(cfg.AppOrigin); err != nil || (u.Scheme != "http" && u.Scheme != "https") ||
+		u.Host == "" || u.Path != "" || u.RawQuery != "" || u.User != nil {
+		errs = append(errs, fmt.Errorf("APP_ORIGIN must be an origin like https://casvuno.example; got %q", cfg.AppOrigin))
+	} else if cfg.IsProduction() && u.Scheme != "https" {
+		errs = append(errs, errors.New("APP_ORIGIN must use https in production"))
+	}
+
+	switch v := strings.ToLower(get("REGISTRATION_ENABLED", "true")); v {
+	case "true", "1", "yes":
+		cfg.RegistrationEnabled = true
+	case "false", "0", "no":
+		cfg.RegistrationEnabled = false
+	default:
+		errs = append(errs, fmt.Errorf("REGISTRATION_ENABLED must be true or false; got %q", v))
 	}
 
 	if len(errs) > 0 {

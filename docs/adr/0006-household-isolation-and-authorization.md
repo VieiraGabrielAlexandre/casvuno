@@ -1,6 +1,6 @@
 # ADR 0006 — Isolamento por família e autorização
 
-- Status: Proposto
+- Status: Proposto, implementado na F1 (2026-11-10); aguardando aceite formal
 - Data: 2026-11-10
 
 ## Decisão
@@ -12,9 +12,11 @@ Defesa em três camadas, todas obrigatórias:
 
 **Visibilidade:** todos os membros ativos veem tudo da família. `scope=PERSONAL` e `person_member_id` são apenas filtros (RN-002). Não existe ACL por lançamento.
 
-**Família ativa:** não existe estado no servidor. O contexto é o `householdId` do path. `GET /auth/me` retorna as famílias do usuário.
+**Família ativa:** não existe estado no servidor. O contexto é o `householdId` do path. `GET /households` lista as famílias ativas do usuário; o web lembra a última escolhida pela URL.
 
 **Membros:** `ACTIVE | INACTIVE`. Desativar preserva o histórico (RN-023). Invariante: sempre ≥ 1 OWNER ativo.
 
 ## Verificação
-Suíte de isolamento table-driven (`apps/api/internal/app/isolation_test.go`): para **cada rota** registrada no router, um usuário de outra família recebe 404/422 e nada é gravado (contagem de linhas antes e depois). Um teste também falha se uma rota nova sob `/households/{id}` não estiver na tabela da suíte.
+Suíte de isolamento em `apps/api/internal/app/households_integration_test.go` (`TestHouseholdIsolation`): para **cada rota** sob `/households/{householdId}`, um usuário de outra família recebe 404 `HOUSEHOLD_NOT_FOUND`, IDs de recursos de outra família endereçados pela própria família dão 404, e nada é gravado (contagem de linhas antes e depois). `TestEveryHouseholdRouteIsCoveredByIsolationTests` percorre o router (`chi.Walk`) e falha se uma rota nova não estiver na tabela `householdRoutes`.
+
+**Reativação:** um ex-membro que aceita novo convite volta como `MEMBER`, nunca com o papel anterior.

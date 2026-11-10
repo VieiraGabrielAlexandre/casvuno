@@ -8,7 +8,7 @@
 **Pré-requisitos:** Docker com Compose v2, Go ≥ 1.21 (o toolchain fixado em `apps/api/go.mod`, hoje 1.27.3, é baixado automaticamente), Node.js ≥ 22 com Corepack (o pnpm fixado em `package.json` é ativado por ele) e GNU Make. Nenhum serviço pago.
 
 ```bash
-make setup     # cria .env a partir de .env.example, instala dependências web, módulos Go e golangci-lint
+make setup     # cria .env a partir de .env.example, instala dependências web, módulos Go, golangci-lint e sqlc
 make up        # PostgreSQL + migrations + API no Docker Compose (aguarda ficarem saudáveis)
 curl http://127.0.0.1:8090/health      # {"status":"ok","checks":{"database":"ok"}}
 make web       # Next.js em http://localhost:3000 (faz proxy de /api e /health para a API)
@@ -26,10 +26,16 @@ make down      # para a stack (o volume do banco é mantido)
 | `make fmt` | formata Go e web |
 | `make build` | binário Go, imagem Docker da API e export estático do web (`apps/web/out`) |
 | `make logs` / `make ps` | logs e estado da stack |
+| `make gen` | regenera o código sqlc e o cliente TypeScript a partir de `docs/openapi.yaml` |
+| `make migrate-new name=…` | cria o próximo par de migrations `up`/`down` |
+
+**Primeiro acesso:** com `make dev` rodando, abra http://localhost:3000, crie sua conta e a família. Para convidar alguém, gere o link na página da família e envie por onde preferir (não há envio de e-mail). Depois que todos tiverem conta, use `REGISTRATION_ENABLED=false` no `.env`: só quem tiver convite consegue se cadastrar.
+
+**Senha esquecida (operador):** `echo 'nova senha longa' | docker compose --env-file .env -f infra/compose.yaml run --rm -T api admin reset-password --email pessoa@exemplo.com`. A senha é lida da entrada padrão, e todas as sessões da pessoa são encerradas.
 
 Portas no host (todas em `127.0.0.1`, configuráveis no `.env`): PostgreSQL `55432`, API `8090`, web `3000`. A configuração da API é feita só por variáveis de ambiente (`.env.example` documenta cada uma); uma configuração inválida faz o processo encerrar na inicialização com a lista de erros.
 
-Estrutura: `apps/api` (Go, Uber Fx, chi, pgx, golang-migrate), `apps/web` (Next.js, TypeScript, Tailwind, shadcn/ui), `packages/` (reservado), `infra/` (Compose), `docs/` (plano, ADRs, modelo de domínio). Antes de contribuir, leia `AGENTS.md`; o andamento está em `docs/implementation-status.md`.
+Estrutura: `apps/api` (Go, Uber Fx, chi, pgx, sqlc, golang-migrate), `apps/web` (Next.js, TypeScript, Tailwind, shadcn/ui), `packages/` (reservado), `infra/` (Compose), `docs/` (plano, ADRs, modelo de domínio). Antes de contribuir, leia `AGENTS.md`; o andamento está em `docs/implementation-status.md`.
 
 ## 0. Objetivo e limites do produto
 
