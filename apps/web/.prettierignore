@@ -1,0 +1,6 @@
+.next
+out
+node_modules
+next-env.d.ts
+pnpm-lock.yaml
+AGENTS.md
