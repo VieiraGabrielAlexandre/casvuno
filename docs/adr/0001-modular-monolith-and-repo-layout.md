@@ -1,6 +1,6 @@
 # ADR 0001 — Monólito modular, módulos e estrutura do monorepo
 
-- Status: Proposto
+- Status: Aceito (2026-11-10)
 - Data: 2026-11-10
 
 ## Contexto

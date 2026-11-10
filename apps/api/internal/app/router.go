@@ -9,7 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"casvuno/api/internal/platform/health"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/health"
 )
 
 func newRouter(pool *pgxpool.Pool, log *slog.Logger) http.Handler {

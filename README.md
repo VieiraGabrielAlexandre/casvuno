@@ -1,8 +1,7 @@
-# Casvuno — Especificação executável para implementação por LLM
+# Casvuno — Especificação do produto (MVP V1)
 
 > **Status:** contrato de produto e engenharia para MVP V1.  
-> **Idioma da interface:** português brasileiro (pt-BR). **Moeda:** BRL. **Fuso padrão:** America/Sao_Paulo.  
-> **Instrução à LLM implementadora:** implemente o produto descrito neste documento, em incrementos funcionais, sem substituir a stack, inventar rateios ou introduzir serviços pagos. Se houver ambiguidade, siga os padrões e decisões explícitos abaixo, documente a decisão no ADR e continue. Não entregue apenas scaffolding ou pseudocódigo.
+> **Idioma da interface:** português brasileiro (pt-BR). **Moeda:** BRL. **Fuso padrão:** America/Sao_Paulo.
 
 ## Como executar (desenvolvimento local)
 
@@ -458,52 +457,7 @@ func NewApp() *fx.App {
 
 Usar `fx.In`/`fx.Out` quando simplificarem construtores; lifecycle do HTTP com shutdown gracioso; pool pgx aberto e fechado no ciclo de vida; dependências validadas no startup.
 
-## 13. Backlog de implementação com dependências
-
-### Sprint 0 — Fundação (P0)
-- [ ] Monorepo, Makefile, lint Go (`golangci-lint`) e TypeScript, formatação, CI, Dockerfiles e Compose.
-- [ ] PostgreSQL, migrações, sqlc, conexão pgx, config, logging, health endpoints, Fx lifecycle.
-- [ ] OpenAPI inicial e geração de cliente TS.
-- [ ] Seed idempotente com categorias padrão em pt-BR.
-- [ ] Testes de integração PostgreSQL no CI.
-**Aceite:** clone limpo + `.env.example` + comandos documentados sobe stack; migrations e testes passam.
-
-### Sprint 1 — Identidade e família (P0)
-- [ ] Registro, login, logout, sessão e CSRF.
-- [ ] Criar/selecionar família, convites por token, aceitar, listar membros, desativar membro.
-- [ ] Middleware de autorização e testes de isolamento entre famílias.
-- [ ] UI onboarding, login, família.
-**Aceite:** dois usuários na mesma família veem recursos compartilhados; usuário externo recebe 403/404 sem vazamento.
-
-### Sprint 2 — Contas, categorias e lançamentos (P0)
-- [ ] CRUD/arquivamento de categorias e contas; saldo inicial e extrato.
-- [ ] Transações imediatas e previstas; obrigações e movimentos.
-- [ ] Transferência atômica entre contas; filtros e paginação.
-- [ ] Lançamento rápido, favoritos e duplicação.
-**Aceite:** Pix de R$ 12,50 gera uma despesa e saída de caixa; transferência de R$ 500 mantém saldo consolidado inalterado.
-
-### Sprint 3 — Cartões e faturas (P0)
-- [ ] CRUD cartões e cálculo de ciclo com testes de datas extremas.
-- [ ] Compra parcelada com distribuição exata de centavos.
-- [ ] Faturas abertas/fechadas, pagamentos parciais/totais, ajustes auditáveis.
-- [ ] UI de cartões e faturas futuras.
-**Aceite:** R$ 100,01 em 3x gera R$ 33,34 + R$ 33,34 + R$ 33,33; pagamento não duplica consumo.
-
-### Sprint 4 — Recorrências, projeções e dashboard (P0)
-- [ ] Regras de recorrência e geração idempotente de previsões.
-- [ ] Consultas de consumo, compromissos e caixa, separadas.
-- [ ] Dashboard, projeção 12 meses, relatórios e CSV.
-- [ ] Worker de lembretes in-app e preferências.
-**Aceite:** previsão não duplica despesa confirmada; 12 meses exibem parcelas e recorrências futuras; CSV segue filtros.
-
-### Sprint 5 — PWA, segurança e estabilização (P0)
-- [ ] Manifest, service worker estático, responsividade, acessibilidade.
-- [ ] E2E críticos, testes de concorrência/idempotência e autorização.
-- [ ] Backup/restauração testada, Caddy TLS, runbook de deploy.
-- [ ] Auditoria e observabilidade mínima.
-**Aceite:** produto utilizável em desktop/mobile, instalável onde suportado, restaurável a partir de backup e sem vazamento entre famílias.
-
-## 14. Casos de teste obrigatórios
+## 13. Casos de teste obrigatórios
 
 | ID | Cenário | Resultado esperado |
 |---|---|---|
@@ -530,27 +484,10 @@ Usar `fx.In`/`fx.Out` quando simplificarem construtores; lifecycle do HTTP com s
 | T21 | Conta conjunta e individual | Ambas incluídas uma vez no consolidado |
 | T22 | Receita prevista depois recebida | Previsão substituída por realizado, sem duplicação |
 
-## 15. Definição de pronto (Definition of Done)
+## 14. Definição de pronto (Definition of Done)
 
 Uma história só está pronta quando: (a) regra implementada e coberta por testes, (b) migration reversível quando possível, (c) validação e autorização corretas, (d) OpenAPI atualizado, (e) frontend funcional e acessível, (f) erros/estados vazios tratados, (g) logs e auditoria apropriados, (h) `make test`, `make lint` e CI passam, (i) documentação de execução atualizada. Não marcar como pronto endpoint sem persistência ou tela com dados mockados quando deveria usar API.
 
-## 16. Instruções operacionais à LLM implementadora
-
-1. Leia **todo este README** antes de gerar código; trate como fonte de verdade. Ignore especificações anteriores que mencionem NestJS, Prisma ou rateio.
-2. Primeiro gere `docs/domain-model.md`, `docs/adr/0001-architecture.md`, `docs/openapi.yaml`, migrations SQL e a estrutura mínima do monorepo.
-3. Implemente verticalmente por sprint: banco -> domínio -> aplicação -> HTTP -> cliente TS -> UI -> testes; entregue código executável a cada incremento.
-4. Para cada alteração, descreva arquivos criados, comandos para testar, casos de teste executados e eventuais decisões não previstas.
-5. Não criar integrações externas, contas pagas ou recursos fora de escopo sem aprovação.
-6. Nunca adicionar divisão de despesas, percentuais por membro ou dívidas entre participantes.
-7. Priorizar regras financeiras corretas e experiência de lançamento rápido sobre gráficos decorativos.
-8. Se houver incompatibilidade técnica, explique o trade-off, proponha a menor alteração e registre ADR. Não trocar Go, Fx, PostgreSQL ou Next.js silenciosamente.
-9. Nunca alegar testes executados sem realmente executá-los. Não simular resultados de build.
-10. Se a LLM tiver limite de contexto, continue a partir do último checklist e mantenha `docs/implementation-status.md` atualizado com itens concluídos, pendentes, decisões e comandos executados.
-
-### Prompt de arranque sugerido
-
-> Você é um Staff Software Engineer especialista em Go, Uber Fx, PostgreSQL, Next.js e aplicações financeiras. Leia integralmente o README fornecido e implemente o MVP de forma incremental. Comece pela Sprint 0, produzindo arquivos reais e executáveis, migrations, testes e documentação. Respeite integralmente a regra de **não dividir despesas entre membros** e o requisito de **custo de infraestrutura mínimo**. Use código limpo, padrões simples, interfaces pequenas e dependências apenas quando justificadas. Ao concluir cada sprint, informe testes executados e próximos passos; não substitua implementação por pseudocódigo.
-
 ---
 
-**Fim da especificação V1.** Alterações futuras devem ser registradas em ADRs e refletidas nos testes de aceitação.
+**Fim da especificação V1.** Alterações futuras são registradas em ADRs (`docs/adr/`) e refletidas nos testes de aceitação. O plano de implementação e as instruções para agentes ficam em `docs/IMPLEMENTATION_PLAN.md` e `AGENTS.md`.

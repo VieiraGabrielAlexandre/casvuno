@@ -1,13 +1,13 @@
 # Plano de implementação — Casvuno V1
 
-> Status: **proposto, aguardando aprovação**. Fonte de verdade de *produto*: `README.md`. Desvios e esclarecimentos: `docs/spec-review.md` + `docs/adr/`. Modelo e invariantes: `docs/domain-model.md`. Andamento: `docs/implementation-status.md`.
+> Único backlog do projeto (o README não tem mais backlog por sprint). Fonte de verdade de *produto*: `README.md`. Desvios e esclarecimentos: `docs/spec-review.md` + `docs/adr/`. Modelo e invariantes: `docs/domain-model.md`. Andamento: `docs/implementation-status.md`.
 
 ## 1. Como usar este plano
 
 - Cada tarefa (`Fx.y`) é **pequena, vertical e verificável**: cabe em uma sessão/PR e termina com comandos que provam o aceite.
 - Siga a ordem dentro de cada fase. Fases só começam quando as dependências listadas estão concluídas.
 - Ao terminar uma tarefa: rode os comandos de verificação, atualize `docs/implementation-status.md` (feito, comandos executados e resultado real, decisões) e o mapeamento de testes (§4) quando for o caso.
-- **Definição de pronto:** README §15 + `AGENTS.md` §8.
+- **Definição de pronto:** README §14 + `AGENTS.md` §8.
 
 ## 2. Estrutura de diretórios alvo
 
@@ -93,7 +93,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | F0.6 | `apps/web`: Next.js 16.4 (App Router, TS), export estático só no build e rewrites só em dev (`next.config.ts` por fase), Tailwind 4, shadcn/ui (`button`), ESLint + Prettier + `tsc`, Vitest; página inicial pt-BR com status da API | F0.1 | `pnpm build` gera `out/`; testes do componente de status passam | `make lint-web test-web build` | ✅ (`lib/money.ts` ↪ **F2.4**, primeiro formulário com valor) |
 | F0.7 | `docs/openapi.yaml` inicial + `make gen` (sqlc + `openapi-typescript`) | F1.1 | `make gen` idempotente | `make gen && git diff --exit-code` | ⏳ junto com F1.1 (primeira rota com contrato além do health) |
 | F0.8 | Dockerfile da API (multi-stage, distroless estático, não-root, 15 MB) + `make up` com `--wait` | F0.3 | Clone limpo + `make setup && make up`: `curl 127.0.0.1:8090/health` 200; portas só em 127.0.0.1 | `make up` | ✅ O web roda no host (`make web`). No Compose ele entra com o Caddy de produção em **F8.2**, porque um container Node com bind mount gravaria arquivos como root no repositório |
-| F0.9 | CI (GitHub Actions) com os mesmos alvos `make lint`, `make test`, `make build` | F0.8 | Pipeline verde | push | ⏳ próxima tarefa (requer remoto GitHub) |
+| F0.9 | CI (GitHub Actions, `.github/workflows/ci.yml`): job **api** (`make lint-go`, `go mod tidy -diff`, `make test-go` com Testcontainers, `docker build`) e job **web** (`make lint-web`, `make test-web`, build estático), rodando os mesmos alvos do Makefile | F0.8 | Pipeline verde em push/PR para `main` | push | 🟡 workflow criado e passos validados localmente; falta a primeira execução no GitHub |
 
 ### F1 — Identidade e família
 
@@ -180,7 +180,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 
 **Fora da V1 (não implementar sem nova aprovação):** tudo listado no README §0 "Fora da V1", Web Push, recuperação de senha por e-mail, troca de papel, exclusão de família por endpoint, edição estrutural de lançamentos, auto-close de fatura.
 
-## 4. Mapeamento dos testes obrigatórios (README §14)
+## 4. Mapeamento dos testes obrigatórios (README §13)
 
 | ID | Tarefa | Nível |
 |---|---|---|

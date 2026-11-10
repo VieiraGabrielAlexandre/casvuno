@@ -11,9 +11,9 @@ import (
 	"os"
 	"strconv"
 
-	"casvuno/api/internal/app"
-	"casvuno/api/internal/platform/config"
-	"casvuno/api/internal/platform/postgres"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/app"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/config"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/postgres"
 )
 
 const usage = `usage:

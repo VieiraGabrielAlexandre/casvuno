@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"os"
 
-	"casvuno/api/internal/platform/config"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/config"
 )
 
 // New returns a JSON logger in production and a human-readable text logger otherwise.

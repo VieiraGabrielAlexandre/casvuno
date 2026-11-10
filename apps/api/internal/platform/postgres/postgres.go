@@ -12,7 +12,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"casvuno/api/db"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/db"
 )
 
 // NewPool creates a lazily connecting pool. Callers decide when to Ping and must Close it.

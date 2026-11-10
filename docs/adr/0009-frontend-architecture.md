@@ -1,6 +1,6 @@
 # ADR 0009 — Frontend: Next.js exportado estaticamente
 
-- Status: Proposto (item I-24 requer aprovação)
+- Status: Aceito (2026-11-10)
 - Data: 2026-11-10
 
 ## Contexto

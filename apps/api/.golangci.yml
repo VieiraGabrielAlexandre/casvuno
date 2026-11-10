@@ -39,4 +39,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - casvuno/api
+        - github.com/VieiraGabrielAlexandre/casvuno/apps/api

@@ -14,9 +14,9 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
-	"casvuno/api/internal/platform/config"
-	"casvuno/api/internal/platform/logging"
-	"casvuno/api/internal/platform/postgres"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/config"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/logging"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/postgres"
 )
 
 // Module wires the platform. Business modules are added here as they are implemented.
