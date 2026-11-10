@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F2 — Contas, idempotência e transferências: **F2.1 concluída** (entrega 4, 2026-11-10; ainda não commitada). Próxima: F2.2.
+F2 — Contas, idempotência e transferências: **F2.1 e F2.2 concluídas** (entregas 4 e 5, 2026-11-10; ainda não commitadas). Próxima: F2.3.
 
 ## Concluído
 
@@ -106,8 +106,24 @@ Correções feitas durante a verificação: o golangci-lint precisou ser compila
 | `make build` | ok |
 | `make up` → `make migrate-down` → `make migrate-up` (stack real) | "reverted 1 migration(s)" → "migrations applied"; `schema_migrations` = 6, dirty = false; tabela presente; `/health` 200 |
 
+### 2026-11-10 — Entrega 5: contas, saldo e extrato (F2.2, API)
+- **Banco:** `000007_accounts` (`accounts` com titular por FK composta, `CHECK` INDIVIDUAL ⇔ titular, nome único entre ativas, saldo inicial com sinal; `account_movements` com FK composta para conta e estorno, `CHECK` REVERSAL ⇔ `reversal_of_id`, índice do extrato, **append-only por trigger** `forbid_update_delete`). `transfers` fica para a F2.3.
+- **`kernel/values.go`:** `MaxAbsCents` (±10^15, exato em JSON) e datas `YYYY-MM-DD`. **`httpx/pagination.go`:** `limit`, cursor opaco e `Page[T]`. sqlc: `DATE` → `time.Time`.
+- **Módulo `accounts`:** listar (com saldo e `totalBalanceCents`), detalhar, criar, editar (nome, tipo, titularidade, saldo inicial, data de abertura), arquivar só com saldo 0 (considerando a correção feita na mesma requisição), conta arquivada congelada até ser restaurada, extrato paginado (keyset `posted_on DESC, id DESC`, filtros `from`/`to`). Titular de conta individual validado por `households.IsActiveMember` (interface `accounts.MemberChecker`); membro de outra família → 422 `OWNER_NOT_MEMBER`. Auditoria `account.created/updated/archived/restored`. Qualquer membro ativo opera.
+- **Docs:** OpenAPI 0.5.0 (contas, extrato, `Date`, `Cents`, `Limit`, `Cursor`), `spec-review` I-42, ADR 0004 (implementação), `domain-model`, plano (F2.2 ✅, migrations renumeradas a partir de 000008), AGENTS.md.
+
+## Comandos executados (entrega 5) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test ./internal/kernel/ ./internal/platform/httpx/` | ok (datas, limite de centavos < 2^53, `limit`, cursor). 1ª execução: 1 falha **do teste** (`cursor=%%%` é query malformada e o Go descarta o parâmetro); trocado por um cursor que não é base64 |
+| `go test -race -tags integration ./internal/app/` | ok na 1ª execução, com 6 testes novos: **T21** (conjunta + individual + negativa somadas uma vez; todo membro vê todas), **RN-017** (saldo = inicial + entradas − saídas, estorno incluso; transferência interna não muda o consolidado), movimentos rejeitam UPDATE/DELETE, extrato com 7 movimentos em páginas de 3 (sem duplicatas, ordem estável em datas iguais, filtros, 5 parâmetros inválidos → 400), 9 validações (incluindo valor fracionário e acima do limite), arquivar com saldo → 422 e conta arquivada congelada, titularidade e correção de saldo inicial; suíte de isolamento com as 5 rotas novas (+ titular de outra família → 422) e ciclo de migrations com a 7 |
+| `make lint` | 0 issues; ESLint, Prettier e `tsc` ok |
+| `make test` | 8 pacotes Go ok; Vitest 18/18 |
+| `go mod tidy -diff` / `make gen` ×2 / `make build` | limpo / idempotente / ok |
+| Stack real: `make up`, `migrate-down`, `migrate-up` + curl | versão 7, dirty = false; conta conjunta criada (201) e lista com `totalBalanceCents` = 150000 |
+
 ## Próxima tarefa
-F2.2 — contas (`accounts`, `account_movements`, `transfers`), saldo (INV-09) e extrato paginado (keyset); depois F2.3 transferências (primeiro uso do middleware de idempotência).
+F2.3 — transferências: migration `transfers` + `transfer_id`, criação atômica com idempotência (primeiro uso do middleware), travando as duas contas e exigindo que estejam ativas; listagem; estorno de movimento. Depois F2.4 (telas de contas, extrato e transferência + `MoneyInput` + gerador de `Idempotency-Key`).
 
 ## Pendências reais
 - **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair.
