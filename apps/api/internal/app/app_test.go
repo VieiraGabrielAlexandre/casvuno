@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/fx"
 
-	"casvuno/api/internal/platform/config"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/config"
 )
 
 func testConfig(databaseURL string) config.Config {

@@ -8,7 +8,14 @@ Casvuno é uma aplicação web/PWA de gestão financeira **familiar**: um monól
 2. Leia a tarefa correspondente em `docs/IMPLEMENTATION_PLAN.md`. Trabalhe em **uma tarefa por vez**, na ordem de dependência.
 3. Consulte `docs/domain-model.md` (invariantes INV-xx) e os ADRs relevantes em `docs/adr/`.
 4. **Precedência** em caso de conflito: ADR com status *Aceito* > `docs/spec-review.md` (itens aprovados) > `docs/domain-model.md` > `README.md`. Se o conflito não estiver resolvido em nenhum deles, **pare e pergunte**; não decida silenciosamente.
-5. Mudança de regra de negócio, de modelagem ou de stack exige um ADR novo (curto, numerado) e aprovação humana.
+5. Mudança de regra de negócio, de modelagem ou de stack exige um ADR novo (curto, numerado) e aprovação humana. Se houver incompatibilidade técnica, explique o trade-off e proponha a menor alteração. Nunca troque Go, Fx, PostgreSQL ou Next.js silenciosamente.
+6. O `README.md` é a especificação de **produto**, voltada a pessoas. Backlog, ordem de execução e instruções para agentes ficam só aqui e em `docs/` (`IMPLEMENTATION_PLAN.md`, `implementation-status.md`, ADRs). Não adicione backlog nem instruções para LLM ao README.
+
+### Como executar uma tarefa
+- Fatia vertical, nesta ordem: migration → domínio → caso de uso → HTTP → OpenAPI/cliente TS → UI → testes. Cada incremento termina executável.
+- Priorize correção financeira e lançamento rápido sobre gráficos ou acabamento visual.
+- Não entregue scaffolding, pseudocódigo, endpoint sem persistência ou tela com dados mockados como funcionalidade pronta.
+- Se o contexto acabar, retome pelo último item registrado em `docs/implementation-status.md`.
 
 ## 2. Regras inegociáveis
 

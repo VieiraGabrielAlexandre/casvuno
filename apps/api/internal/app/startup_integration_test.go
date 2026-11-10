@@ -15,7 +15,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"go.uber.org/fx"
 
-	"casvuno/api/internal/platform/postgres"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/postgres"
 )
 
 // postgresImage must match infra/compose.yaml.

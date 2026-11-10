@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API (Go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      # Same targets as local development. golangci-lint is built with the go.mod toolchain
+      # (released binaries may target an older Go and refuse this module).
+      - name: Cache golangci-lint
+        id: lint-cache
+        uses: actions/cache@v6
+        with:
+          path: apps/api/bin/golangci-lint
+          key: golangci-lint-v2.15.0-${{ runner.os }}-${{ hashFiles('apps/api/go.mod') }}
+
+      # Restored files keep an old mtime; without this, make would rebuild the cached binary.
+      - name: Mark cached golangci-lint as up to date
+        if: steps.lint-cache.outputs.cache-hit == 'true'
+        run: touch apps/api/bin/golangci-lint
+
+      - name: Lint
+        run: make lint-go
+
+      - name: Verify go.mod is tidy
+        working-directory: apps/api
+        run: go mod tidy -diff
+
+      # Integration tests start PostgreSQL through Testcontainers (Docker is available on the runner).
+      - name: Test (unit + integration)
+        run: make test-go
+
+      - name: Build image
+        run: docker build --tag casvuno-api:ci apps/api
+
+  web:
+    name: Web (Next.js)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6 # version comes from "packageManager" in package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint and typecheck
+        run: make lint-web
+
+      - name: Test
+        run: make test-web
+
+      - name: Build (static export)
+        run: pnpm --filter web build

@@ -36,13 +36,19 @@ F0 — Fundação. Entrega 1 concluída em 2026-11-10 (F0.1, F0.2, F0.3, F0.6, F
 
 Correções feitas durante a verificação: o golangci-lint precisou ser compilado com Go 1.27 (o Makefile agora usa o toolchain do `go.mod`); 3 achados `noctx` em testes corrigidos; `gosec` G101 (credenciais falsas em fixtures) excluído só em `_test.go`.
 
+### 2026-11-10 — Pós-entrega 1 (preparação da etapa 2)
+- Remoto: `github.com/VieiraGabrielAlexandre/casvuno` (primeiro push feito pelo usuário, commit `71de13c`).
+- Aprovados I-12, I-13, I-22 e I-24 → ADRs 0001, 0005 e 0009 com status **Aceito**.
+- Caminho do módulo Go: `casvuno/api` → `github.com/VieiraGabrielAlexandre/casvuno/apps/api` (imports e `goimports.local-prefixes` atualizados).
+- `.gitignore` único na raiz (removido `apps/web/.gitignore`).
+- F0.9: `.github/workflows/ci.yml` criado. Passos executados localmente: `make lint` (0 issues), `go mod tidy -diff` (limpo), `make test` (3 pacotes Go ok, incluindo integração; Vitest 2/2), `docker build` ok, `pnpm --filter web build` ok. O YAML foi validado com `yaml.safe_load`; o `actionlint` não rodou (execução bloqueada pela política de permissões da sessão).
+
 ## Próxima tarefa
-F0.9 — CI no GitHub Actions (precisa do repositório remoto). Se o remoto ainda não existir, seguir para F1.1 (que absorve os itens movidos da F0).
+Confirmar o CI verde no GitHub depois do push; em seguida, F1.1 (que absorve os itens movidos da F0).
 
 ## Pendências reais
-- **Decisões de produto em aberto:** I-04, I-08, I-12, I-13, I-15, I-18, I-19, I-22, I-24 (`docs/spec-review.md`); ADRs ainda com status "Proposto". A entrega 1 já seguiu I-22 (binário único) e I-24 (export estático), ambos reversíveis com baixo custo neste estágio.
-- **Sem commits:** o repositório foi inicializado (`main`), mas nada foi commitado nem tem remoto.
-- **CI (F0.9)** não existe.
+- **Decisões de produto em aberto:** I-04, I-08, I-15, I-18, I-19 (`docs/spec-review.md`; afetam F3–F5). ADRs 0002, 0003, 0004, 0006, 0007, 0008, 0010, 0011 e 0012 continuam "Proposto".
+- **CI ainda não executado no GitHub:** as alterações desta preparação não foram commitadas.
 - **Web fora do Compose em dev** (decisão registrada no plano/ADR 0009). O web no Compose entra com o Caddy em F8.2.
 - **`apps/web/AGENTS.md`** é gerado e reinserido pelo `next dev`; mantido versionado.
 - O pnpm 12 marcou `sharp` e `unrs-resolver` como build não permitido (`allowBuilds: false`). O build e o lint funcionam sem eles; reavaliar se o ESLint import resolver precisar.

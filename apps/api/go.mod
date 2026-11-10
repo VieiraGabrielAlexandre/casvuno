@@ -1,4 +1,4 @@
-module casvuno/api
+module github.com/VieiraGabrielAlexandre/casvuno/apps/api
 
 go 1.27.0
 
