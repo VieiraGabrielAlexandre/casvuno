@@ -1,6 +1,6 @@
 # ADR 0007 — Idempotência e concorrência
 
-- Status: Proposto
+- Status: Proposto; mecânica de idempotência implementada na F2.1 (2026-11-10)
 - Data: 2026-11-10
 
 ## Decisão
@@ -15,6 +15,16 @@
    - Conflito: o PostgreSQL faz uma requisição concorrente com a mesma chave **esperar** o commit da primeira. Depois, `SELECT`: hash igual → *replay* com o mesmo status e corpo; hash diferente → **409** `IDEMPOTENCY_KEY_REUSED` (T09, T10).
 4. Se a operação falhar, ocorre rollback e a chave não fica gravada, então o cliente pode tentar de novo.
 5. Retenção de 7 dias. A limpeza diária fica a cargo do worker.
+
+**Implementação (F2.1, `internal/platform/idempotency`):**
+- Middleware `(*idempotency.Middleware).Require`, aplicado por rota (`r.With(idem.Require).Post(...)`) em rotas montadas sob `/households/{householdId}` (exige a membership no contexto). O handler roda **dentro** da transação da chave: os serviços usam `TxManager.WithinTx`, que reaproveita essa transação.
+- Refinamentos em relação ao item 2–4 acima:
+  - `request_hash = SHA-256(método + caminho concreto + corpo JSON canônico)`: o caminho concreto (com IDs) faz a mesma chave em outro recurso (outra fatura) dar 409; o corpo é canonizado (ordem de chaves e espaços não importam; números preservados sem arredondamento). `endpoint` (parte da unicidade) = método + rota-padrão.
+  - Só respostas **2xx** são memorizadas. Qualquer outra resposta faz rollback de tudo (operação e chave): o cliente pode repetir com a mesma chave.
+  - A resposta fica em buffer e só é enviada **depois do commit**: nunca há sucesso respondido e não gravado.
+  - Replay devolve os **mesmos bytes** (coluna `bytea`, não `jsonb`, I-41) com o cabeçalho `Idempotent-Replayed: true`.
+  - Chave expirada (> 7 dias) é substituída e a requisição roda de novo. A limpeza periódica das expiradas fica para o worker (F5.2).
+  - Erros: 400 `IDEMPOTENCY_KEY_REQUIRED`, 400 `IDEMPOTENCY_KEY_INVALID` (1–128 caracteres ASCII visíveis), 409 `IDEMPOTENCY_KEY_REUSED`.
 
 **Concorrência financeira** (READ COMMITTED + locks explícitos):
 - pagamento de fatura: `SELECT … FROM card_invoices WHERE id=$ AND household_id=$ FOR UPDATE`, depois soma e verifica o teto;

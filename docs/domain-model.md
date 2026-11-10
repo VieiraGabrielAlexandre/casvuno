@@ -47,6 +47,7 @@ Grafo de dependência (acíclico): `accounts ← cards ← ledger ← recurrence
 | `card_invoices` | `status OPEN \| CLOSED`; `UNIQUE(credit_card_id, cycle_start_on)` e `UNIQUE(credit_card_id, closing_on)`; `closed_at`, `closed_by`. |
 | `invoice_adjustments` | `amount_cents ≠ 0` (com sinal); `reason` obrigatório. |
 | `recurring_occurrences` | Sem `transaction_id`/`obligation_id`. `status PLANNED \| GENERATED \| SKIPPED \| CANCELLED`. |
+| `idempotency_keys` | `response_body bytea` (não `jsonb`, I-41); `response_status` 2xx; `request_hash bytea(32)`; linha só persiste junto com uma operação bem-sucedida. |
 | `notification_preferences` | Sem `push_enabled` até existir Web Push. |
 
 Todas as FKs entre recursos de negócio são compostas `(household_id, x_id)` → `UNIQUE(household_id, id)` no destino. `ON DELETE RESTRICT` em tudo que é financeiro.

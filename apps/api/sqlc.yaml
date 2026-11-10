@@ -53,3 +53,11 @@ sql:
       go:
         <<: *go
         out: internal/categories/store
+
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/idempotency.sql
+    gen:
+      go:
+        <<: *go
+        out: internal/platform/idempotency/store

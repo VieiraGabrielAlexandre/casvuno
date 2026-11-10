@@ -452,10 +452,19 @@ export interface components {
         };
     };
     parameters: {
+        /**
+         * @description Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+         *     Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+         *     Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+         *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+         */
+        IdempotencyKey: string;
         HouseholdId: string;
     };
     requestBodies: never;
     headers: {
+        /** @description Presente (`true`) quando a resposta é a repetição de uma execução anterior com a mesma Idempotency-Key. */
+        IdempotentReplayed: "true";
         /** @description Cookie de sessão HttpOnly, SameSite=Lax, Path=/ (Secure sob HTTPS). */
         SessionCookie: string;
     };

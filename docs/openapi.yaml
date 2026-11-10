@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.3.0
+  version: 0.4.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -379,6 +379,17 @@ components:
       name: casvuno_session
 
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+        Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+        Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+        Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+      schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[!-~]+$" }
+
     HouseholdId:
       name: householdId
       in: path
@@ -386,6 +397,10 @@ components:
       schema: { type: string, format: uuid }
 
   headers:
+    IdempotentReplayed:
+      description: Presente (`true`) quando a resposta é a repetição de uma execução anterior com a mesma Idempotency-Key.
+      schema: { type: string, enum: ["true"] }
+
     SessionCookie:
       description: Cookie de sessão HttpOnly, SameSite=Lax, Path=/ (Secure sob HTTPS).
       schema: { type: string }

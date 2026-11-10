@@ -20,6 +20,7 @@ import (
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/audit"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/clock"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/config"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/idempotency"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/logging"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/postgres"
 )
@@ -32,6 +33,7 @@ var Module = fx.Options(
 		newPool,
 		postgres.NewTxManager,
 		audit.NewRecorder,
+		idempotency.New, // used by financial routes from F2.3 on (ADR 0007)
 		func() clock.Clock { return clock.System{} },
 		func() identity.Argon2Params { return identity.DefaultArgon2Params },
 		newRouter,
