@@ -468,3 +468,15 @@ func invalidTimezone() error {
 	return kernel.NewError(kernel.ErrValidation, "VALIDATION_ERROR", "Fuso horário inválido.",
 		kernel.FieldError{Field: "timezone", Reason: "iana_timezone"})
 }
+
+// IsActiveMember reports whether memberID is an active member of householdID. It implements
+// accounts.MemberChecker (owner of INDIVIDUAL accounts).
+func (s *Service) IsActiveMember(ctx context.Context, householdID, memberID uuid.UUID) (bool, error) {
+	ok, err := store.New(s.tx.Conn(ctx)).IsActiveMember(ctx, store.IsActiveMemberParams{
+		HouseholdID: householdID, MemberID: memberID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("check member: %w", err)
+	}
+	return ok, nil
+}

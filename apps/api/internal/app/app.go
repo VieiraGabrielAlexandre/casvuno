@@ -14,12 +14,14 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/accounts"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/categories"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/households"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/identity"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/audit"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/clock"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/config"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/idempotency"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/logging"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/postgres"
 )
@@ -32,6 +34,7 @@ var Module = fx.Options(
 		newPool,
 		postgres.NewTxManager,
 		audit.NewRecorder,
+		idempotency.New, // used by financial routes from F2.3 on (ADR 0007)
 		func() clock.Clock { return clock.System{} },
 		func() identity.Argon2Params { return identity.DefaultArgon2Params },
 		newRouter,
@@ -40,7 +43,17 @@ var Module = fx.Options(
 	identityModule,
 	householdsModule,
 	categoriesModule,
+	accountsModule,
 	fx.Invoke(func(*http.Server) {}), // the server is the root of the object graph
+)
+
+var accountsModule = fx.Module("accounts",
+	fx.Provide(
+		accounts.NewService,
+		accounts.NewHandler,
+		// households implements the consumer-defined accounts.MemberChecker.
+		func(s *households.Service) accounts.MemberChecker { return s },
+	),
 )
 
 var categoriesModule = fx.Module("categories",

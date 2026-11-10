@@ -287,6 +287,25 @@ func (q *Queries) GetPendingInviteByToken(ctx context.Context, arg GetPendingInv
 	return i, err
 }
 
+const isActiveMember = `-- name: IsActiveMember :one
+SELECT EXISTS (
+    SELECT 1 FROM household_members
+    WHERE household_id = $1 AND id = $2 AND status = 'ACTIVE'
+)
+`
+
+type IsActiveMemberParams struct {
+	HouseholdID uuid.UUID
+	MemberID    uuid.UUID
+}
+
+func (q *Queries) IsActiveMember(ctx context.Context, arg IsActiveMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isActiveMember, arg.HouseholdID, arg.MemberID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listHouseholdsForUser = `-- name: ListHouseholdsForUser :many
 SELECT h.id, h.name, h.timezone, h.currency, h.created_at, m.id AS member_id, m.role
 FROM household_members m

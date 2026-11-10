@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/accounts"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/categories"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/households"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/identity"
@@ -17,7 +18,7 @@ import (
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/httpx"
 )
 
-func newRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, ids *identity.Handler, hh *households.Handler, cats *categories.Handler) http.Handler {
+func newRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, ids *identity.Handler, hh *households.Handler, cats *categories.Handler, accts *accounts.Handler) http.Handler {
 	r := chi.NewRouter()
 	r.Use(httpx.WithRequestID, accessLog(log), httpx.Recoverer(log))
 
@@ -40,6 +41,7 @@ func newRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, ids *ide
 				r.Use(hh.RequireMember)
 				hh.ScopedRoutes(r)
 				cats.Routes(r)
+				accts.Routes(r)
 			})
 		})
 	})

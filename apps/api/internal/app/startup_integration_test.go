@@ -14,14 +14,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"go.uber.org/fx"
 
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/postgres"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/postgres/pgtest"
 )
-
-// postgresImage must match infra/compose.yaml.
-const postgresImage = "postgres:18.6-alpine"
 
 // databaseURL points to a migrated database shared by the integration tests of this package.
 // Tests isolate their data by creating their own users and households (no truncation).
@@ -32,29 +29,13 @@ func TestMain(m *testing.M) {
 }
 
 func runWithPostgres(m *testing.M) int {
-	ctx := context.Background()
-	ctr, err := tcpostgres.Run(ctx, postgresImage,
-		tcpostgres.WithDatabase("casvuno"),
-		tcpostgres.WithUsername("casvuno"),
-		tcpostgres.WithPassword("casvuno"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if ctr != nil {
-		defer func() { _ = ctr.Terminate(ctx) }()
-	}
+	url, stop, err := pgtest.Start(context.Background())
+	defer stop()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "start postgres:", err)
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	databaseURL, err = ctr.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "connection string:", err)
-		return 1
-	}
-	if err := postgres.MigrateUp(databaseURL); err != nil {
-		fmt.Fprintln(os.Stderr, "migrate:", err)
-		return 1
-	}
+	databaseURL = url
 	return m.Run()
 }
 
@@ -67,7 +48,7 @@ func TestMigrationsUpDownUp(t *testing.T) {
 	}
 	assertSchema(t, url, true)
 
-	if err := postgres.MigrateDown(url, 4); err != nil {
+	if err := postgres.MigrateDown(url, 6); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 	assertSchema(t, url, false)
@@ -146,7 +127,7 @@ func assertSchema(t *testing.T, url string, want bool) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close(ctx)
-	for _, table := range []string{"users", "sessions", "households", "household_members", "household_invites", "audit_events", "categories"} {
+	for _, table := range []string{"users", "sessions", "households", "household_members", "household_invites", "audit_events", "categories", "idempotency_keys", "accounts", "account_movements"} {
 		var exists bool
 		if err := conn.QueryRow(ctx, "SELECT to_regclass('public.' || $1) IS NOT NULL", table).Scan(&exists); err != nil {
 			t.Fatalf("query: %v", err)
@@ -160,7 +141,7 @@ func assertSchema(t *testing.T, url string, want bool) {
 		t.Fatalf("query: %v", err)
 	}
 	if !citext {
-		t.Error("citext (migration 1) must remain after reverting migrations 2-5")
+		t.Error("citext (migration 1) must remain after reverting migrations 2-7")
 	}
 }
 

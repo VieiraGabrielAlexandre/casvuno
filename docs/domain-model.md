@@ -38,8 +38,8 @@ Grafo de dependência (acíclico): `accounts ← cards ← ledger ← recurrence
 | `household_invites` | `email NULL` (informativo); uso único (`accepted_at`/`accepted_by_user_id`); `revoked_at`; expira em 7 dias; `invited_by_member_id` com FK composta. |
 | `audit_events` | `household_id NOT NULL`; append-only garantido por trigger. |
 | `categories` | `parent_id` só pode apontar para uma categoria sem pai, ativa, do mesmo `kind` e da mesma família (FK composta + regra no serviço). Nome único entre irmãos ativos (índice parcial, `lower(name)`). Nunca apagada: `is_active=false`. No máximo 200 por família. Criadas com a família (49 padrões pt-BR, `internal/categories/defaults.go`). |
-| `accounts` | `opening_balance_cents` pode ser negativo. |
-| `account_movements` | Sem coluna de status. `kind ∈ {DIRECT_PAYMENT, DIRECT_RECEIPT, INVOICE_PAYMENT, TRANSFER, REVERSAL}` (sem `OPENING_ADJUSTMENT`). `reversal_of_id UNIQUE NULL`. |
+| `accounts` | `opening_balance_cents` pode ser negativo (limite ±10^15); `UNIQUE(household_id, id)`; titular via FK composta para `household_members`; nome único entre contas ativas; arquivar exige saldo 0 e congela a conta (I-42). |
+| `account_movements` | Sem coluna de status. `kind ∈ {DIRECT_PAYMENT, DIRECT_RECEIPT, INVOICE_PAYMENT, TRANSFER, REVERSAL}` (sem `OPENING_ADJUSTMENT`). `reversal_of_id UNIQUE NULL` (FK composta; `kind = REVERSAL` ⇔ `reversal_of_id` preenchido). **Append-only por trigger** (`forbid_update_delete`). `transfer_id` chega com `transfers` na F2.3. |
 | `transfers` | Coluna `description` adicionada. |
 | `transactions` | Novas colunas: `payment_method`, `account_id NULL`, `credit_card_id NULL`. `recurring_occurrence_id UNIQUE NULL` (só regra com cartão). CHECK: `credit_card_id IS NOT NULL ⇔ payment_method='CREDIT_CARD'`, e `kind='INCOME' ⇒ credit_card_id IS NULL`. |
 | `obligations` | `source ∈ {DIRECT, RECURRING, MANUAL_FORECAST}` (sem `CARD_INSTALLMENT`). `status ∈ {PLANNED, CONFIRMED, CANCELLED}`. Saem `card_invoice_id`, `installment_*` e `paid_cents`. Novos campos de rascunho: `description`, `category_id`, `scope`, `person_member_id NULL`, `payment_method`, `account_id NULL`, `competence_on`. `transaction_id UNIQUE NULL`. `recurring_occurrence_id UNIQUE NULL`. |
@@ -47,6 +47,7 @@ Grafo de dependência (acíclico): `accounts ← cards ← ledger ← recurrence
 | `card_invoices` | `status OPEN \| CLOSED`; `UNIQUE(credit_card_id, cycle_start_on)` e `UNIQUE(credit_card_id, closing_on)`; `closed_at`, `closed_by`. |
 | `invoice_adjustments` | `amount_cents ≠ 0` (com sinal); `reason` obrigatório. |
 | `recurring_occurrences` | Sem `transaction_id`/`obligation_id`. `status PLANNED \| GENERATED \| SKIPPED \| CANCELLED`. |
+| `idempotency_keys` | `response_body bytea` (não `jsonb`, I-41); `response_status` 2xx; `request_hash bytea(32)`; linha só persiste junto com uma operação bem-sucedida. |
 | `notification_preferences` | Sem `push_enabled` até existir Web Push. |
 
 Todas as FKs entre recursos de negócio são compostas `(household_id, x_id)` → `UNIQUE(household_id, id)` no destino. `ON DELETE RESTRICT` em tudo que é financeiro.

@@ -33,9 +33,11 @@ Casvuno é uma aplicação web/PWA de gestão financeira **familiar**: um monól
 - Layout: `apps/api/internal/<módulo>`. `go.uber.org/fx` **só** em `internal/app` e `cmd/`. Módulos não importam outros módulos de negócio; a comunicação é por interfaces pequenas **definidas pelo consumidor** e ligadas no composition root (`fx.As`).
 - `domain/` é puro: sem IO, sem `time.Now()` (use `clock.Clock`), sem `context` de banco, sem HTTP/SQL/fx.
 - Rotas de família: o módulo expõe `Routes(r)` com caminhos relativos (ex.: `/categories`) e `internal/app/router.go` as monta dentro de `/households/{householdId}`, já protegidas por `households.RequireMember` (use `households.RequireOwner` para ações administrativas). O handler lê `authctx.MembershipFrom(ctx)`. Toda rota nova sob `/households/{householdId}` entra em `householdRoutes` (suíte de isolamento); o teste de cobertura falha caso contrário.
+- Rotas das mutações listadas no ADR 0007: `r.With(idem.Require).Post(...)` (`*idempotency.Middleware`, já no Fx). O handler roda dentro da transação da chave; os serviços devem gravar via `TxManager` (o `WithinTx` aninhado reaproveita a transação). Só respostas 2xx são memorizadas.
+- Valores: `int64` com sufixo `Cents`, limitados por `kernel.MaxAbsCents`. Datas de calendário: `kernel.ParseDate`/`FormatDate` (`YYYY-MM-DD`; `time.Time` UTC no Go). Listagens paginadas: `httpx.ParseLimit`, `httpx.EncodeCursor`/`DecodeCursor` e `httpx.Page[T]` (keyset com ordenação estável).
 - Textos para o usuário ficam em pt-BR dentro de strings; o `misspell` só verifica comentários.
 - Casos de uso recebem `context.Context` e um `householdID` já autorizado, e devolvem erros de `kernel` (`ErrValidation`, `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrInvariant`), com `%w` para contexto.
-- Operações com mais de uma escrita usam `TxRunner.WithinTx`. Locks com `SELECT … FOR UPDATE` conforme o ADR 0007. Auditoria e idempotência na mesma transação.
+- Operações com mais de uma escrita usam `postgres.TxManager.WithinTx` (stores obtêm a conexão com `tx.Conn(ctx)`). Locks com `SELECT … FOR UPDATE` conforme o ADR 0007. Auditoria e idempotência na mesma transação.
 - SQL explícito em `db/queries/<módulo>.sql` com sqlc. Sem ORM, sem `Repository[T]`, sem SQL concatenado.
 - DTOs HTTP separados das entidades. JSON em camelCase. Decode estrito.
 - Proibido: pacote `utils`/`common`/`helpers`, `BaseService`, interfaces com uma única implementação sem consumidor que precise delas, `panic` fora de `main`, variáveis globais mutáveis, `init()` com efeitos colaterais.

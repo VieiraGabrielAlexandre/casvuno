@@ -112,11 +112,13 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 
 ### F2 — Contas, idempotência e transferências
 
+**Entrega 4 (2026-11-10):** F2.1 concluída. **Entrega 5:** F2.2 concluída (API; telas de contas na F2.4). Gerador de `Idempotency-Key` no web (`lib/idempotency.ts`) entra na F2.4, com o primeiro formulário financeiro.
+
 | ID | Tarefa | Dep. | Aceite | Verificar |
 |---|---|---|---|---|
-| F2.1 | Migration `idempotency_keys` + `platform/idempotency` (ADR 0007) | F1.4 | T09, T10 e duas requisições concorrentes com a mesma chave → uma operação e um replay | `make test` |
-| F2.2 | Migration `accounts`/`account_movements`/`transfers`; CRUD de contas (owner obrigatório se INDIVIDUAL), saldo (INV-09), extrato paginado; arquivar só com saldo 0 | F1.5 | T21; RN-017; ordenação estável no extrato | `make test` |
-| F2.3 | Transferência atômica + listagem; estorno de movimento interno (usado depois pelo void) | F2.1, F2.2 | T04; origem = destino → 422; conta de outra família → 422 (T15); `check-invariants` INV-08 | `make test` |
+| F2.1 | Migration `idempotency_keys` + `platform/idempotency` (ADR 0007) | F1.4 | T09, T10 e duas requisições concorrentes com a mesma chave → uma operação e um replay | `make test` | ✅ (entrega 4; middleware pronto, primeiro uso real em F2.3) |
+| F2.2 | Migration `accounts`/`account_movements`/`transfers`; CRUD de contas (owner obrigatório se INDIVIDUAL), saldo (INV-09), extrato paginado; arquivar só com saldo 0 | F1.5 | T21; RN-017; ordenação estável no extrato | `make test` | ✅ (entrega 5; `transfers` foi para a F2.3, junto com o primeiro uso) |
+| F2.3 | Migration `transfers` (+ `account_movements.transfer_id`); transferência atômica + listagem, travando as duas contas (`FOR UPDATE`) e exigindo contas ativas (corrida com o arquivamento); estorno de movimento interno (usado depois pelo void) | F2.1, F2.2 | T04; origem = destino → 422; conta de outra família → 422 (T15); `check-invariants` INV-08 | `make test` |
 | F2.4 | Web: contas (saldos, extrato), formulário de transferência, componente `MoneyInput`, padrão de mutação com idempotência e estado offline | F2.3 | Vitest em `MoneyInput`; E2E de transferência com consolidado inalterado | `pnpm -C apps/web test && make e2e` |
 
 ### F3 — Lançamentos (ledger)
@@ -214,15 +216,16 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | 000003 | households, household_members, household_invites | F1.4 ✅ |
 | 000004 | audit_events (append-only por trigger; FK para households) | F1.3 ✅ |
 | 000005 | categories | F1.5 ✅ |
-| 000006 | idempotency_keys | F2.1 |
-| 000007 | accounts, account_movements, transfers | F2.2 |
-| 000008 | transactions, obligations, obligation_payments | F3.1 |
-| 000009 | quick_templates | F3.4 |
-| 000010 | credit_cards | F4.2 |
-| 000011 | card_invoices, card_installments, ALTER transactions (credit_card_id) | F4.3 |
-| 000012 | invoice_payments, invoice_adjustments | F4.5 |
-| 000013 | recurring_rules, recurring_occurrences, ALTER obligations/transactions | F5.3 |
-| 000014 | notification_preferences, notifications | F7.1 |
+| 000006 | idempotency_keys (`response_body bytea`, I-41) | F2.1 ✅ |
+| 000007 | accounts, account_movements (append-only por trigger) | F2.2 ✅ |
+| 000008 | transfers + ALTER account_movements (transfer_id) | F2.3 |
+| 000009 | transactions, obligations, obligation_payments | F3.1 |
+| 000010 | quick_templates | F3.4 |
+| 000011 | credit_cards | F4.2 |
+| 000012 | card_invoices, card_installments, ALTER transactions (credit_card_id) | F4.3 |
+| 000013 | invoice_payments, invoice_adjustments | F4.5 |
+| 000014 | recurring_rules, recurring_occurrences, ALTER obligations/transactions | F5.3 |
+| 000015 | notification_preferences, notifications | F7.1 |
 
 A numeração é indicativa: se a ordem de entrega mudar, a sequência real segue a ordem de criação.
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.3.0
+  version: 0.5.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -16,6 +16,7 @@ tags:
   - name: households
   - name: invites
   - name: categories
+  - name: accounts
 
 paths:
   /health:
@@ -368,6 +369,113 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /api/v1/households/{householdId}/accounts:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+    get:
+      tags: [accounts]
+      operationId: listAccounts
+      summary: Contas com saldo e saldo consolidado (caixa; sem paginação, no máximo 50 por família)
+      parameters:
+        - name: includeArchived
+          in: query
+          schema: { type: string, enum: ["true", "false"] }
+      responses:
+        "200":
+          description: Contas ativas primeiro, por nome
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [accounts]
+      operationId: createAccount
+      summary: Abrir conta (individual exige titular ativo; conjunta não tem titular)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAccountRequest" }
+      responses:
+        "201":
+          description: Conta criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/accounts/{accountId}:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/AccountId"
+    get:
+      tags: [accounts]
+      operationId: getAccount
+      summary: Conta com saldo
+      responses:
+        "200":
+          description: Conta
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [accounts]
+      operationId: updateAccount
+      summary: Editar, arquivar (só com saldo zero) ou restaurar conta
+      description: Conta arquivada só aceita `isActive=true`. `ownership=JOINT` remove o titular.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAccountRequest" }
+      responses:
+        "200":
+          description: Conta atualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/accounts/{accountId}/movements:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/AccountId"
+    get:
+      tags: [accounts]
+      operationId: listAccountMovements
+      summary: Extrato (movimentos de caixa, mais recentes primeiro; paginação por cursor)
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: from
+          in: query
+          schema: { $ref: "#/components/schemas/Date" }
+        - name: to
+          in: query
+          schema: { $ref: "#/components/schemas/Date" }
+      responses:
+        "200":
+          description: Página do extrato
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MovementPage" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
 security:
   - sessionCookie: []
 
@@ -379,6 +487,35 @@ components:
       name: casvuno_session
 
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+        Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+        Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+        Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+      schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[!-~]+$" }
+
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+    Limit:
+      name: limit
+      in: query
+      description: Itens por página (padrão 25).
+      schema: { type: integer, minimum: 1, maximum: 100 }
+
+    Cursor:
+      name: cursor
+      in: query
+      description: Valor opaco de `nextCursor` da página anterior.
+      schema: { type: string }
+
     HouseholdId:
       name: householdId
       in: path
@@ -386,6 +523,10 @@ components:
       schema: { type: string, format: uuid }
 
   headers:
+    IdempotentReplayed:
+      description: Presente (`true`) quando a resposta é a repetição de uma execução anterior com a mesma Idempotency-Key.
+      schema: { type: string, enum: ["true"] }
+
     SessionCookie:
       description: Cookie de sessão HttpOnly, SameSite=Lax, Path=/ (Secure sob HTTPS).
       schema: { type: string }
@@ -634,3 +775,100 @@ components:
         color: { type: string, description: "#RRGGBB, ou vazio para remover" }
         sortOrder: { type: integer, minimum: 0, maximum: 10000 }
         isActive: { type: boolean, description: "false arquiva; true restaura" }
+
+    Date:
+      type: string
+      format: date
+      description: Data de calendário AAAA-MM-DD (sem fuso).
+
+    Cents:
+      type: integer
+      description: Valor em centavos (inteiro). Limite ±10^15.
+      minimum: -1000000000000000
+      maximum: 1000000000000000
+
+    AccountType:
+      type: string
+      enum: [CHECKING, SAVINGS, CASH, OTHER]
+
+    Ownership:
+      type: string
+      enum: [INDIVIDUAL, JOINT]
+
+    Account:
+      type: object
+      additionalProperties: false
+      required: [id, name, type, ownership, ownerMemberId, openingBalanceCents, openedOn, balanceCents, isActive, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        type: { $ref: "#/components/schemas/AccountType" }
+        ownership: { $ref: "#/components/schemas/Ownership" }
+        ownerMemberId: { type: [string, "null"], format: uuid }
+        openingBalanceCents: { $ref: "#/components/schemas/Cents" }
+        openedOn: { $ref: "#/components/schemas/Date" }
+        balanceCents:
+          type: integer
+          description: Saldo de caixa = saldo inicial + entradas − saídas (RN-017)
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    AccountList:
+      type: object
+      additionalProperties: false
+      required: [items, totalBalanceCents]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Account" }
+        totalBalanceCents:
+          type: integer
+          description: Caixa consolidado da família (cada conta contada uma vez, individuais e conjuntas)
+
+    CreateAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [name, type, ownership, openingBalanceCents, openedOn]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
+        type: { $ref: "#/components/schemas/AccountType" }
+        ownership: { $ref: "#/components/schemas/Ownership" }
+        ownerMemberId: { type: string, format: uuid, description: Obrigatório se INDIVIDUAL }
+        openingBalanceCents: { $ref: "#/components/schemas/Cents" }
+        openedOn: { $ref: "#/components/schemas/Date" }
+
+    UpdateAccountRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
+        type: { $ref: "#/components/schemas/AccountType" }
+        ownership: { $ref: "#/components/schemas/Ownership" }
+        ownerMemberId: { type: string, format: uuid }
+        openingBalanceCents: { $ref: "#/components/schemas/Cents" }
+        openedOn: { $ref: "#/components/schemas/Date" }
+        isActive: { type: boolean, description: "false arquiva (exige saldo zero); true restaura" }
+
+    Movement:
+      type: object
+      additionalProperties: false
+      required: [id, direction, amountCents, postedOn, kind, reversalOfId, description, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        direction: { type: string, enum: [IN, OUT] }
+        amountCents: { type: integer, minimum: 1 }
+        postedOn: { $ref: "#/components/schemas/Date" }
+        kind: { type: string, enum: [DIRECT_PAYMENT, DIRECT_RECEIPT, INVOICE_PAYMENT, TRANSFER, REVERSAL] }
+        reversalOfId: { type: [string, "null"], format: uuid }
+        description: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    MovementPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Movement" }
+        nextCursor: { type: [string, "null"] }

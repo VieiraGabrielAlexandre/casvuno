@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F1 — Identidade e família **concluída** (entrega 3, 2026-11-10; ainda não commitada). Próxima: F2.
+F2 — Contas, idempotência e transferências: **F2.1 e F2.2 concluídas** (entregas 4 e 5, 2026-11-10; ainda não commitadas). Próxima: F2.3.
 
 ## Concluído
 
@@ -88,14 +88,48 @@ Correções feitas durante a verificação: o golangci-lint precisou ser compila
 | `make up` + `make web` + curl pelo proxy | migration 5 aplicada; família nova com 49 categorias (12 principais de despesa, 5 de receita); subcategoria 201; arquivar 204; `/categories` 200 |
 | API parada (`compose stop api`) | proxy do Next responde `500 Internal Server Error` em texto puro (caso que o cliente agora traduz); `make web` imprime o AVISO; API religada e saudável |
 
+### 2026-11-10 — Entrega 4: idempotência (F2.1)
+- **Banco:** `000006_idempotency_keys` (unicidade por família + usuário + endpoint + chave; `response_status` só 2xx; `response_body bytea`, I-41; índice em `expires_at` para a limpeza futura).
+- **`internal/platform/idempotency`:** middleware `Require` (ADR 0007): chave gravada na mesma transação da operação; handler executado dentro dela com resposta em buffer, enviada só após o commit; 2xx memorizado, qualquer outro status desfaz tudo; replay byte a byte com `Idempotent-Replayed: true`; 409 para a mesma chave com outra requisição (corpo canônico + caminho concreto); chave expirada é substituída. Registrado no Fx; nenhuma rota o usa ainda (primeira: F2.3 transferências).
+- **Testes:** `internal/platform/postgres/pgtest` (PostgreSQL efêmero e migrado, agora compartilhado por `internal/app` e `idempotency`).
+- **Docs:** ADR 0007 (implementação e refinamentos), `spec-review` I-41, `domain-model`, plano, OpenAPI 0.4.0 (parâmetro `Idempotency-Key` e cabeçalho `Idempotent-Replayed` em `components`), AGENTS.md (como aplicar o middleware).
+
+## Comandos executados (entrega 4) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test -race -tags integration ./internal/platform/idempotency/` | 1ª execução: 2 falhas **reais**: o replay vinha de `jsonb`, que reordena chaves, então não era byte a byte igual ao original. Coluna trocada para `bytea` (I-41). Depois 7/7 ok: T09 (replay, inclusive com JSON em outra ordem e espaçamento), T10 (outro corpo e outro recurso → 409, sem novo efeito), chave ausente/inválida → 400, falha 422 não memorizada e repetível, **10 requisições concorrentes com a mesma chave → 1 efeito e 9 replays**, escopo por usuário/família, chave expirada roda de novo |
+| mesmo pacote com `-count=10` nos testes de concorrência e T09 | ok (estável) |
+| `go test ./internal/platform/idempotency/` (unitário) | ok: hash canônico (ordem/espaço ignorados; valor, ordem de array, caminho, método e inteiros grandes mudam o hash) e validação da chave |
+| `make lint` | 0 issues; ESLint, Prettier e `tsc` ok |
+| `make test` | 7 pacotes Go ok (incluindo `internal/app` com a migration 6 no ciclo up/down/up); Vitest 18/18 |
+| `go mod tidy -diff` / `make gen` ×2 | limpo / idempotente |
+| `make build` | ok |
+| `make up` → `make migrate-down` → `make migrate-up` (stack real) | "reverted 1 migration(s)" → "migrations applied"; `schema_migrations` = 6, dirty = false; tabela presente; `/health` 200 |
+
+### 2026-11-10 — Entrega 5: contas, saldo e extrato (F2.2, API)
+- **Banco:** `000007_accounts` (`accounts` com titular por FK composta, `CHECK` INDIVIDUAL ⇔ titular, nome único entre ativas, saldo inicial com sinal; `account_movements` com FK composta para conta e estorno, `CHECK` REVERSAL ⇔ `reversal_of_id`, índice do extrato, **append-only por trigger** `forbid_update_delete`). `transfers` fica para a F2.3.
+- **`kernel/values.go`:** `MaxAbsCents` (±10^15, exato em JSON) e datas `YYYY-MM-DD`. **`httpx/pagination.go`:** `limit`, cursor opaco e `Page[T]`. sqlc: `DATE` → `time.Time`.
+- **Módulo `accounts`:** listar (com saldo e `totalBalanceCents`), detalhar, criar, editar (nome, tipo, titularidade, saldo inicial, data de abertura), arquivar só com saldo 0 (considerando a correção feita na mesma requisição), conta arquivada congelada até ser restaurada, extrato paginado (keyset `posted_on DESC, id DESC`, filtros `from`/`to`). Titular de conta individual validado por `households.IsActiveMember` (interface `accounts.MemberChecker`); membro de outra família → 422 `OWNER_NOT_MEMBER`. Auditoria `account.created/updated/archived/restored`. Qualquer membro ativo opera.
+- **Docs:** OpenAPI 0.5.0 (contas, extrato, `Date`, `Cents`, `Limit`, `Cursor`), `spec-review` I-42, ADR 0004 (implementação), `domain-model`, plano (F2.2 ✅, migrations renumeradas a partir de 000008), AGENTS.md.
+
+## Comandos executados (entrega 5) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test ./internal/kernel/ ./internal/platform/httpx/` | ok (datas, limite de centavos < 2^53, `limit`, cursor). 1ª execução: 1 falha **do teste** (`cursor=%%%` é query malformada e o Go descarta o parâmetro); trocado por um cursor que não é base64 |
+| `go test -race -tags integration ./internal/app/` | ok na 1ª execução, com 6 testes novos: **T21** (conjunta + individual + negativa somadas uma vez; todo membro vê todas), **RN-017** (saldo = inicial + entradas − saídas, estorno incluso; transferência interna não muda o consolidado), movimentos rejeitam UPDATE/DELETE, extrato com 7 movimentos em páginas de 3 (sem duplicatas, ordem estável em datas iguais, filtros, 5 parâmetros inválidos → 400), 9 validações (incluindo valor fracionário e acima do limite), arquivar com saldo → 422 e conta arquivada congelada, titularidade e correção de saldo inicial; suíte de isolamento com as 5 rotas novas (+ titular de outra família → 422) e ciclo de migrations com a 7 |
+| `make lint` | 0 issues; ESLint, Prettier e `tsc` ok |
+| `make test` | 8 pacotes Go ok; Vitest 18/18 |
+| `go mod tidy -diff` / `make gen` ×2 / `make build` | limpo / idempotente / ok |
+| Stack real: `make up`, `migrate-down`, `migrate-up` + curl | versão 7, dirty = false; conta conjunta criada (201) e lista com `totalBalanceCents` = 150000 |
+
 ## Próxima tarefa
-F2.1 — idempotência (`idempotency_keys` + `platform/idempotency`, ADR 0007); depois F2.2 contas e F2.3 transferências.
+F2.3 — transferências: migration `transfers` + `transfer_id`, criação atômica com idempotência (primeiro uso do middleware), travando as duas contas e exigindo que estejam ativas; listagem; estorno de movimento. Depois F2.4 (telas de contas, extrato e transferência + `MoneyInput` + gerador de `Idempotency-Key`).
 
 ## Pendências reais
 - **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair.
 - **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
-- **Sem limpeza de sessões e convites expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).
+- **Sem limpeza de sessões, convites e chaves de idempotência expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).
 - **Página de convite** não mostra o nome da família antes do aceite (não há rota pública de pré-visualização, de propósito, para não expor dados a quem só tem o link).
 - **Decisões de produto em aberto:** I-04, I-08, I-15, I-18, I-19 (`docs/spec-review.md`; afetam F3–F5). ADRs 0002, 0003, 0004, 0006, 0007, 0008, 0010, 0011 e 0012 continuam "Proposto"; o 0006 já está implementado e aguarda aceite formal.
 - **Web fora do Compose em dev** (decisão registrada no plano/ADR 0009). O web no Compose entra com o Caddy em F8.2.

@@ -99,3 +99,9 @@ UPDATE household_invites
 SET revoked_at = @now::timestamptz
 WHERE household_id = @household_id AND id = @id
   AND accepted_at IS NULL AND revoked_at IS NULL;
+
+-- name: IsActiveMember :one
+SELECT EXISTS (
+    SELECT 1 FROM household_members
+    WHERE household_id = @household_id AND id = @member_id AND status = 'ACTIVE'
+);
