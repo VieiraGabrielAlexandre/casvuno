@@ -276,6 +276,70 @@ export interface paths {
         patch: operations["updateCategory"];
         trace?: never;
     };
+    "/api/v1/households/{householdId}/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        /** Contas com saldo e saldo consolidado (caixa; sem paginação, no máximo 50 por família) */
+        get: operations["listAccounts"];
+        put?: never;
+        /** Abrir conta (individual exige titular ativo; conjunta não tem titular) */
+        post: operations["createAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/accounts/{accountId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        /** Conta com saldo */
+        get: operations["getAccount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Editar, arquivar (só com saldo zero) ou restaurar conta
+         * @description Conta arquivada só aceita `isActive=true`. `ownership=JOINT` remove o titular.
+         */
+        patch: operations["updateAccount"];
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/accounts/{accountId}/movements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        /** Extrato (movimentos de caixa, mais recentes primeiro; paginação por cursor) */
+        get: operations["listAccountMovements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -439,6 +503,80 @@ export interface components {
             /** @description false arquiva; true restaura */
             isActive?: boolean;
         };
+        /**
+         * Format: date
+         * @description Data de calendário AAAA-MM-DD (sem fuso).
+         */
+        Date: string;
+        /** @description Valor em centavos (inteiro). Limite ±10^15. */
+        Cents: number;
+        /** @enum {string} */
+        AccountType: "CHECKING" | "SAVINGS" | "CASH" | "OTHER";
+        /** @enum {string} */
+        Ownership: "INDIVIDUAL" | "JOINT";
+        Account: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            type: components["schemas"]["AccountType"];
+            ownership: components["schemas"]["Ownership"];
+            /** Format: uuid */
+            ownerMemberId: string | null;
+            openingBalanceCents: components["schemas"]["Cents"];
+            openedOn: components["schemas"]["Date"];
+            /** @description Saldo de caixa = saldo inicial + entradas − saídas (RN-017) */
+            balanceCents: number;
+            isActive: boolean;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        AccountList: {
+            items: components["schemas"]["Account"][];
+            /** @description Caixa consolidado da família (cada conta contada uma vez, individuais e conjuntas) */
+            totalBalanceCents: number;
+        };
+        CreateAccountRequest: {
+            name: string;
+            type: components["schemas"]["AccountType"];
+            ownership: components["schemas"]["Ownership"];
+            /**
+             * Format: uuid
+             * @description Obrigatório se INDIVIDUAL
+             */
+            ownerMemberId?: string;
+            openingBalanceCents: components["schemas"]["Cents"];
+            openedOn: components["schemas"]["Date"];
+        };
+        UpdateAccountRequest: {
+            name?: string;
+            type?: components["schemas"]["AccountType"];
+            ownership?: components["schemas"]["Ownership"];
+            /** Format: uuid */
+            ownerMemberId?: string;
+            openingBalanceCents?: components["schemas"]["Cents"];
+            openedOn?: components["schemas"]["Date"];
+            /** @description false arquiva (exige saldo zero); true restaura */
+            isActive?: boolean;
+        };
+        Movement: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            direction: "IN" | "OUT";
+            amountCents: number;
+            postedOn: components["schemas"]["Date"];
+            /** @enum {string} */
+            kind: "DIRECT_PAYMENT" | "DIRECT_RECEIPT" | "INVOICE_PAYMENT" | "TRANSFER" | "REVERSAL";
+            /** Format: uuid */
+            reversalOfId: string | null;
+            description: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        MovementPage: {
+            items: components["schemas"]["Movement"][];
+            nextCursor: string | null;
+        };
     };
     responses: {
         /** @description Erro no envelope padrão */
@@ -459,6 +597,11 @@ export interface components {
          *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
          */
         IdempotencyKey: string;
+        AccountId: string;
+        /** @description Itens por página (padrão 25). */
+        Limit: number;
+        /** @description Valor opaco de `nextCursor` da página anterior. */
+        Cursor: string;
         HouseholdId: string;
     };
     requestBodies: never;
@@ -972,6 +1115,155 @@ export interface operations {
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             422: components["responses"]["Error"];
+        };
+    };
+    listAccounts: {
+        parameters: {
+            query?: {
+                includeArchived?: "true" | "false";
+            };
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contas ativas primeiro, por nome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Conta criada */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conta */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Conta atualizada */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listAccountMovements: {
+        parameters: {
+            query?: {
+                /** @description Itens por página (padrão 25). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Valor opaco de `nextCursor` da página anterior. */
+                cursor?: components["parameters"]["Cursor"];
+                from?: components["schemas"]["Date"];
+                to?: components["schemas"]["Date"];
+            };
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Página do extrato */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MovementPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
 }

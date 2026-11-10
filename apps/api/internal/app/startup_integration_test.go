@@ -48,7 +48,7 @@ func TestMigrationsUpDownUp(t *testing.T) {
 	}
 	assertSchema(t, url, true)
 
-	if err := postgres.MigrateDown(url, 5); err != nil {
+	if err := postgres.MigrateDown(url, 6); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 	assertSchema(t, url, false)
@@ -127,7 +127,7 @@ func assertSchema(t *testing.T, url string, want bool) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close(ctx)
-	for _, table := range []string{"users", "sessions", "households", "household_members", "household_invites", "audit_events", "categories", "idempotency_keys"} {
+	for _, table := range []string{"users", "sessions", "households", "household_members", "household_invites", "audit_events", "categories", "idempotency_keys", "accounts", "account_movements"} {
 		var exists bool
 		if err := conn.QueryRow(ctx, "SELECT to_regclass('public.' || $1) IS NOT NULL", table).Scan(&exists); err != nil {
 			t.Fatalf("query: %v", err)
@@ -141,7 +141,7 @@ func assertSchema(t *testing.T, url string, want bool) {
 		t.Fatalf("query: %v", err)
 	}
 	if !citext {
-		t.Error("citext (migration 1) must remain after reverting migrations 2-6")
+		t.Error("citext (migration 1) must remain after reverting migrations 2-7")
 	}
 }
 
