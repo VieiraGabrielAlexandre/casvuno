@@ -49,7 +49,7 @@ Casvuno é uma aplicação web/PWA de gestão financeira **familiar**: um monól
 - golang-migrate com `NNNNNN_desc.up.sql` + `.down.sql`. **Nunca editar uma migration já mesclada**; criar uma nova.
 - Constraints no banco sempre que possível (`CHECK`, `UNIQUE`, FKs compostas `(household_id, x_id)`, `ON DELETE RESTRICT`). Enum = `TEXT` + `CHECK`.
 - `DATE` para datas de calendário e `TIMESTAMPTZ` para instantes.
-- Novas invariantes verificáveis em SQL vão para `infra/sql/check-invariants.sql`.
+- Novas invariantes verificáveis em SQL vão para `infra/sql/check-invariants.sql` (uma linha por violação). Os testes de integração de `internal/app` o executam ao fim do pacote e via `assertInvariants(t)`; `make check-invariants` roda contra o banco do Compose.
 
 ## 5. Frontend (Next.js) — convenções
 
@@ -102,8 +102,9 @@ make fmt | build
 make migrate-up | migrate-down [N=1]
 make migrate-new name=snake_case   # par up/down sequencial
 make gen            # sqlc + cliente TS a partir de docs/openapi.yaml (commite o resultado)
+make check-invariants  # invariantes financeiras no banco do Compose (sem linhas = consistente)
 ```
-Previstos no plano (ainda não existem): `seed`, `e2e`, `backup`, `restore-test`, `check-invariants`.
+Previstos no plano (ainda não existem): `seed`, `e2e`, `backup`, `restore-test`.
 
 ## 10. Honestidade e relato
 

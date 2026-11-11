@@ -44,7 +44,7 @@ WHERE household_id = @household_id AND id = @id;
 
 -- Statement, newest first, keyset-paginated on (posted_on, id).
 -- name: ListMovements :many
-SELECT id, direction, amount_cents, posted_on, kind, reversal_of_id, description, created_at
+SELECT id, direction, amount_cents, posted_on, kind, transfer_id, reversal_of_id, description, created_at
 FROM account_movements
 WHERE household_id = @household_id AND account_id = @account_id
   AND (sqlc.narg(from_date)::date IS NULL OR posted_on >= sqlc.narg(from_date)::date)
@@ -53,3 +53,38 @@ WHERE household_id = @household_id AND account_id = @account_id
        OR (posted_on, id) < (sqlc.narg(after_posted_on)::date, sqlc.narg(after_id)::uuid))
 ORDER BY posted_on DESC, id DESC
 LIMIT @row_limit;
+
+-- name: CreateTransfer :exec
+INSERT INTO transfers (id, household_id, from_account_id, to_account_id, amount_cents, posted_on, description, created_by_member_id)
+VALUES (@id, @household_id, @from_account_id, @to_account_id, @amount_cents, @posted_on, @description, @created_by_member_id);
+
+-- name: CreateMovement :exec
+INSERT INTO account_movements (id, household_id, account_id, direction, amount_cents, posted_on, kind, transfer_id, reversal_of_id, description)
+VALUES (@id, @household_id, @account_id, @direction, @amount_cents, @posted_on, @kind,
+        sqlc.narg(transfer_id), sqlc.narg(reversal_of_id), @description);
+
+-- Transfers newest first, keyset-paginated on (posted_on, id); optional account filter
+-- matches either side.
+-- name: ListTransfers :many
+SELECT t.id, t.from_account_id, fa.name AS from_account_name, t.to_account_id, ta.name AS to_account_name,
+       t.amount_cents, t.posted_on, t.description, t.created_by_member_id, t.created_at
+FROM transfers t
+JOIN accounts fa ON fa.household_id = t.household_id AND fa.id = t.from_account_id
+JOIN accounts ta ON ta.household_id = t.household_id AND ta.id = t.to_account_id
+WHERE t.household_id = @household_id
+  AND (sqlc.narg(account_id)::uuid IS NULL
+       OR t.from_account_id = sqlc.narg(account_id)::uuid OR t.to_account_id = sqlc.narg(account_id)::uuid)
+  AND (sqlc.narg(from_date)::date IS NULL OR t.posted_on >= sqlc.narg(from_date)::date)
+  AND (sqlc.narg(to_date)::date IS NULL OR t.posted_on <= sqlc.narg(to_date)::date)
+  AND (sqlc.narg(after_posted_on)::date IS NULL
+       OR (t.posted_on, t.id) < (sqlc.narg(after_posted_on)::date, sqlc.narg(after_id)::uuid))
+ORDER BY t.posted_on DESC, t.id DESC
+LIMIT @row_limit;
+
+-- name: GetTransfer :one
+SELECT t.id, t.from_account_id, fa.name AS from_account_name, t.to_account_id, ta.name AS to_account_name,
+       t.amount_cents, t.posted_on, t.description, t.created_by_member_id, t.created_at
+FROM transfers t
+JOIN accounts fa ON fa.household_id = t.household_id AND fa.id = t.from_account_id
+JOIN accounts ta ON ta.household_id = t.household_id AND ta.id = t.to_account_id
+WHERE t.household_id = @household_id AND t.id = @id;

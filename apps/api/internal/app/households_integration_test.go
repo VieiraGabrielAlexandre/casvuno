@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func TestHouseholdLifecycle(t *testing.T) {
@@ -182,6 +183,8 @@ func householdRoutes(ids routeIDs) []struct {
 		{http.MethodGet, "/accounts/" + ids.account, nil},
 		{http.MethodPatch, "/accounts/" + ids.account, map[string]any{"name": "Invadida"}},
 		{http.MethodGet, "/accounts/" + ids.account + "/movements", nil},
+		{http.MethodGet, "/transfers", nil},
+		{http.MethodPost, "/transfers", map[string]any{"fromAccountId": ids.account, "toAccountId": ids.account, "amountCents": 1, "postedOn": "2026-11-10"}},
 	}
 }
 
@@ -197,6 +200,7 @@ func TestHouseholdIsolation(t *testing.T) {
 
 	ownerB, _ := api.registerUser("ownerB")
 	b := ownerB.createHousehold("Casa B")
+	accB := ownerB.createAccount(b.ID, map[string]any{"name": "Conta B"})
 
 	before := countRows(t, api)
 	for _, rt := range householdRoutes(routeIDs{member: a.MemberID, invite: invA.ID, category: catA.ID, account: accA.ID}) {
@@ -214,6 +218,16 @@ func TestHouseholdIsolation(t *testing.T) {
 	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/accounts/"+accA.ID, nil)
 	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/accounts/"+accA.ID+"/movements", nil)
 	ownerB.expect(http.StatusNotFound, http.MethodPatch, "/api/v1/households/"+b.ID+"/accounts/"+accA.ID, map[string]any{"isActive": false})
+	// A's accounts used in a transfer inside B: rejected as if they did not exist.
+	for _, body := range []map[string]any{
+		{"fromAccountId": accA.ID, "toAccountId": accB.ID, "amountCents": 100, "postedOn": "2026-11-10"},
+		{"fromAccountId": accB.ID, "toAccountId": accA.ID, "amountCents": 100, "postedOn": "2026-11-10"},
+	} {
+		if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/transfers", body,
+			"Idempotency-Key", uuid.NewString()).errorCode(t); code != "ACCOUNT_NOT_FOUND" {
+			t.Fatalf("got %s", code)
+		}
+	}
 	// A's member as owner of an account in B: rejected as if it did not exist (field ownerMemberId).
 	if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/accounts",
 		map[string]any{"name": "X", "type": "CHECKING", "ownership": "INDIVIDUAL", "ownerMemberId": a.MemberID,
@@ -308,7 +322,7 @@ func TestAuditTrail(t *testing.T) {
 func countRows(t *testing.T, api *testAPI) map[string]int64 {
 	t.Helper()
 	out := map[string]int64{}
-	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements"} {
+	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers"} {
 		var n int64
 		if err := api.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 			t.Fatal(err)

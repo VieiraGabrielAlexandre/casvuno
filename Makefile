@@ -11,7 +11,7 @@ SQLC_VERSION     := v1.31.1
 # Loads .env into the recipe's environment (for commands that run on the host).
 LOAD_ENV         := set -a && . ./.env && set +a
 
-.PHONY: help setup up down logs ps dev web api migrate-up migrate-down migrate-new gen \
+.PHONY: help setup up down logs ps dev web api migrate-up migrate-down migrate-new check-invariants gen \
         test test-unit test-go test-go-unit test-web lint lint-go lint-web fmt build
 
 help: ## List available targets
@@ -66,6 +66,10 @@ migrate-up: .env ## Apply pending migrations
 
 migrate-down: .env ## Revert the last migration (N=… to revert more)
 	$(COMPOSE) run --rm --build migrate migrate down $(or $(N),1)
+
+check-invariants: .env ## Check financial invariants on the Compose database (no output rows = consistent)
+	$(LOAD_ENV) && $(COMPOSE) exec -T db psql -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" \
+		-c "\pset footer off" -f - < infra/sql/check-invariants.sql
 
 migrate-new: ## Create an empty up/down migration pair: make migrate-new name=add_things
 	infra/scripts/new-migration.sh $(API_DIR)/db/migrations "$(name)"

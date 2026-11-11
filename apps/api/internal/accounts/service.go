@@ -62,6 +62,7 @@ type Movement struct {
 	AmountCents  int64
 	PostedOn     time.Time
 	Kind         string
+	TransferID   *uuid.UUID
 	ReversalOfID *uuid.UUID
 	Description  string
 	CreatedAt    time.Time
