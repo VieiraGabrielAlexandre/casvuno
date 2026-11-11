@@ -32,6 +32,7 @@
 - inserção de parcela e fechamento: `FOR UPDATE` na fatura;
 - void: `FOR UPDATE` na transação;
 - transferência (F2.3): `FOR UPDATE` nas duas contas **em ordem fixa de ID** (evita deadlock entre transferências em sentidos opostos) e exige contas ativas (evita a corrida com o arquivamento); sem verificação de saldo (ADR 0002); as duas pernas na mesma transação SQL. Testado com 20 transferências simultâneas em sentidos opostos;
+- lançamento imediato (F3.1): `FOR SHARE` na categoria (impede arquivar no meio do lançamento sem serializar lançamentos) e depois `FOR UPDATE` na conta, **antes** de inserir as linhas que a referenciam. Inserir antes e travar depois causava deadlock entre lançamentos concorrentes: a FK pega `KEY SHARE` na conta e o `FOR UPDATE` posterior vira um *lock upgrade*. Testado com 20 lançamentos simultâneos na mesma conta;
 - jobs do worker: `pg_try_advisory_xact_lock(job_id)` + `ON CONFLICT DO NOTHING`.
 
 **Teste T17:** N goroutines pagam o saldo total ao mesmo tempo, com chaves diferentes. Exatamente uma é aceita e as demais recebem 422 `AMOUNT_EXCEEDS_OUTSTANDING`.

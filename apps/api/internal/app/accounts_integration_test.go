@@ -51,19 +51,31 @@ func (c *client) accounts(householdID, query string) accountListDTO {
 	return l
 }
 
-// insertMovement writes a non-transfer cash movement directly: until payments (F3) exist, no
-// API creates them, but balance and statement must already be correct.
-func (api *testAPI) insertMovement(householdID, accountID, direction string, cents int64, postedOn, kind string, reversalOf *string) string {
+// paidMovementID returns the cash movement of an immediate entry (via its obligation payment).
+func (api *testAPI) paidMovementID(transactionID string) string {
 	api.t.Helper()
 	var id string
 	err := api.pool.QueryRow(context.Background(), `
-		INSERT INTO account_movements (id, household_id, account_id, direction, amount_cents, posted_on, kind, reversal_of_id, description)
-		VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'teste') RETURNING id`,
-		householdID, accountID, direction, cents, postedOn, kind, reversalOf).Scan(&id)
+		SELECT p.account_movement_id FROM obligation_payments p
+		JOIN obligations o ON o.household_id = p.household_id AND o.id = p.obligation_id
+		WHERE o.transaction_id = $1`, transactionID).Scan(&id)
 	if err != nil {
 		api.t.Fatal(err)
 	}
 	return id
+}
+
+// insertReversal writes a reversal directly: its API arrives with void (F3.3), but balances
+// must already account for it.
+func (api *testAPI) insertReversal(householdID, accountID string, cents int64, postedOn, of string) {
+	api.t.Helper()
+	_, err := api.pool.Exec(context.Background(), `
+		INSERT INTO account_movements (id, household_id, account_id, direction, amount_cents, posted_on, kind, reversal_of_id, description)
+		VALUES (uuidv7(), $1, $2, 'IN', $3, $4, 'REVERSAL', $5, 'teste')`,
+		householdID, accountID, cents, postedOn, of)
+	if err != nil {
+		api.t.Fatal(err)
+	}
 }
 
 // T21: individual and joint accounts are both part of the family cash, each counted once.
@@ -101,9 +113,10 @@ func TestBalanceIsDerivedFromMovements(t *testing.T) {
 	a := owner.createAccount(h.ID, map[string]any{"openingBalanceCents": 10000})
 	b := owner.createAccount(h.ID, map[string]any{"name": "Outra", "openingBalanceCents": 0})
 
-	api.insertMovement(h.ID, a.ID, "IN", 5000, "2026-11-02", "DIRECT_RECEIPT", nil)
-	out := api.insertMovement(h.ID, a.ID, "OUT", 1250, "2026-11-03", "DIRECT_PAYMENT", nil)
-	api.insertMovement(h.ID, a.ID, "IN", 1250, "2026-11-04", "REVERSAL", &out)
+	expenseCat, incomeCat := owner.firstCategory(h.ID, "EXPENSE"), owner.firstCategory(h.ID, "INCOME")
+	owner.createTransaction(h.ID, entryBody("INCOME", incomeCat.ID, a.ID, 5000, "2026-11-02"))
+	out := owner.createTransaction(h.ID, entryBody("EXPENSE", expenseCat.ID, a.ID, 1250, "2026-11-03"))
+	api.insertReversal(h.ID, a.ID, 1250, "2026-11-04", api.paidMovementID(out.ID))
 	owner.transfer(h.ID, a.ID, b.ID, 3000, "2026-11-05")
 
 	var got accountDTO
@@ -132,9 +145,10 @@ func TestStatementPaginationIsStableAndFiltered(t *testing.T) {
 	a := owner.createAccount(h.ID, nil)
 	base := "/api/v1/households/" + h.ID + "/accounts/" + a.ID + "/movements"
 
+	income := owner.firstCategory(h.ID, "INCOME")
 	days := []string{"2026-11-01", "2026-11-03", "2026-11-03", "2026-11-03", "2026-11-05", "2026-11-07", "2026-11-07"}
 	for i, d := range days {
-		api.insertMovement(h.ID, a.ID, "IN", int64(100+i), d, "DIRECT_RECEIPT", nil)
+		owner.createTransaction(h.ID, entryBody("INCOME", income.ID, a.ID, int64(100+i), d))
 	}
 
 	var all []movementDTO
@@ -238,8 +252,8 @@ func TestArchiveRequiresZeroBalanceAndFreezesTheAccount(t *testing.T) {
 		t.Fatalf("got %s", code)
 	}
 
-	// Once the money leaves (here: a movement), the account can be archived.
-	api.insertMovement(h.ID, a.ID, "OUT", 10000, "2026-11-05", "DIRECT_PAYMENT", nil)
+	// Once the money leaves (here: an expense), the account can be archived.
+	owner.createTransaction(h.ID, entryBody("EXPENSE", owner.firstCategory(h.ID, "EXPENSE").ID, a.ID, 10000, "2026-11-05"))
 	var archived accountDTO
 	owner.expect(http.StatusOK, http.MethodPatch, path, map[string]any{"isActive": false}).decode(t, &archived)
 	if archived.IsActive || archived.BalanceCents != 0 {

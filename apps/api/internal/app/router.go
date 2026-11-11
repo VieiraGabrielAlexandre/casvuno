@@ -13,12 +13,13 @@ import (
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/categories"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/households"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/identity"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/ledger"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/config"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/health"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/httpx"
 )
 
-func newRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, ids *identity.Handler, hh *households.Handler, cats *categories.Handler, accts *accounts.Handler) http.Handler {
+func newRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, ids *identity.Handler, hh *households.Handler, cats *categories.Handler, accts *accounts.Handler, ldg *ledger.Handler) http.Handler {
 	r := chi.NewRouter()
 	r.Use(httpx.WithRequestID, accessLog(log), httpx.Recoverer(log))
 
@@ -42,6 +43,7 @@ func newRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, ids *ide
 				hh.ScopedRoutes(r)
 				cats.Routes(r)
 				accts.Routes(r)
+				ldg.Routes(r)
 			})
 		})
 	})

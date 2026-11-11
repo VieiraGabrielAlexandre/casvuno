@@ -1,6 +1,6 @@
 # ADR 0010 — Worker embutido, recorrências e lembretes
 
-- Status: Proposto (item I-19 requer aprovação)
+- Status: Aceito em 2026-11-11 (I-19 aprovado pelo usuário)
 - Data: 2026-11-10
 
 ## Decisão

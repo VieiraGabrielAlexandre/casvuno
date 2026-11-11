@@ -349,3 +349,19 @@ func toCategory(r store.Category) Category {
 		IsActive: r.IsActive, SortOrder: int(r.SortOrder), CreatedAt: r.CreatedAt,
 	}
 }
+
+// LockForEntry returns the kind and active flag of a category that a new financial entry is
+// about to reference, holding a share lock until the caller's transaction ends (it must run
+// inside TxManager.WithinTx), so the category cannot be archived concurrently. found is
+// false for unknown IDs and for categories of other households. It implements the
+// consumer-defined ledger.CategoryChecker.
+func (s *Service) LockForEntry(ctx context.Context, householdID, id uuid.UUID) (kind string, active, found bool, err error) {
+	row, err := store.New(s.tx.Conn(ctx)).LockCategoryForEntry(ctx, store.LockCategoryForEntryParams{HouseholdID: householdID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, false, nil
+	}
+	if err != nil {
+		return "", false, false, fmt.Errorf("lock category: %w", err)
+	}
+	return row.Kind, row.IsActive, true, nil
+}

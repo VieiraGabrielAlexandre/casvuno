@@ -1,6 +1,6 @@
 # ADR 0003 — Ciclo de cartão, alocação de parcelas e fechamento de fatura
 
-- Status: Proposto (item I-15 requer aprovação)
+- Status: Aceito em 2026-11-11 (I-15 aprovado pelo usuário)
 - Data: 2026-11-10
 
 ## Contexto

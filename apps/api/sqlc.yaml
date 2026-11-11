@@ -75,3 +75,11 @@ sql:
       go:
         <<: *go
         out: internal/accounts/store
+
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/ledger.sql
+    gen:
+      go:
+        <<: *go
+        out: internal/ledger/store
