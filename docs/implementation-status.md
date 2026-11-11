@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F2 — Contas, idempotência e transferências: **F2.1 e F2.2 concluídas** (entregas 4 e 5, 2026-11-10; ainda não commitadas). Próxima: F2.3.
+F2 — Contas, idempotência e transferências: **F2.1, F2.2 e F2.3 concluídas** (entregas 4 e 5 mescladas no PR #4; entrega 6 ainda não commitada). Próxima: F2.4 (telas).
 
 ## Concluído
 
@@ -122,8 +122,25 @@ Correções feitas durante a verificação: o golangci-lint precisou ser compila
 | `go mod tidy -diff` / `make gen` ×2 / `make build` | limpo / idempotente / ok |
 | Stack real: `make up`, `migrate-down`, `migrate-up` + curl | versão 7, dirty = false; conta conjunta criada (201) e lista com `totalBalanceCents` = 150000 |
 
+### 2026-11-10 — Entrega 6: transferências (F2.3, API)
+- **Banco:** `000008_transfers` (`transfers` com FKs compostas para as duas contas e o membro, `CHECK` origem ≠ destino, append-only por trigger; `account_movements.transfer_id` com FK composta e `CHECK (kind = 'TRANSFER') = (transfer_id IS NOT NULL)`).
+- **`accounts/transfers.go`:** `CreateTransfer`: valida (contas distintas → 422 `SAME_ACCOUNT`; valor 1..10^15; descrição até 200, padrão "Transferência"), trava as duas contas em ordem fixa de ID e exige contas ativas (`ACCOUNT_NOT_FOUND`/`ACCOUNT_ARCHIVED` com o campo), grava a transferência + perna OUT + perna IN + auditoria numa transação. Saldo negativo permitido. `ListTransfers` paginado por cursor (filtros `accountId` em qualquer lado, `from`, `to`). Extrato passa a expor `transferId`.
+- **HTTP:** `GET /transfers` e `POST /transfers` com `idempotency.Require` (**primeiro uso real do middleware da F2.1**).
+- **Invariantes:** `infra/sql/check-invariants.sql` (INV-08 e INV-18) + `make check-invariants`; os testes de integração o rodam ao fim do pacote e em testes de dinheiro.
+- **Escopo:** o estorno de movimento foi para a F3.3, com o void (primeiro consumidor), em vez de nascer sem uso.
+- **Docs:** OpenAPI 0.6.0, plano (F2.3 ✅, F3.3 e F8.3 ajustadas), ADR 0007 (ordem de travamento), `domain-model`, AGENTS.md.
+
+## Comandos executados (entrega 6) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test -race -tags integration ./internal/app/` | ok na 1ª execução com 6 testes novos: **T04** (R$ 500 move os dois saldos e mantém o caixa; extrato com as duas pernas ligadas à transferência; **T09/T10 pela API**: replay byte a byte com `Idempotent-Replayed`, mesma chave com outro valor → 409, dinheiro não se move de novo), 8 validações + chave ausente → 400 + saldo negativo permitido, listagem paginada e filtrada, **20 transferências simultâneas em sentidos opostos** (todas 201, sem deadlock, saldos voltam ao início), imutabilidade e perna órfã rejeitada, e o **verificador de invariantes detecta INV-08 e INV-18** plantadas num banco separado. Isolamento: 2 rotas novas + contas de outra família numa transferência → 422 `ACCOUNT_NOT_FOUND` sem gravar nada. Invariantes verificadas ao fim do pacote: nenhuma violação |
+| `make lint` | 0 issues; ESLint, Prettier e `tsc` ok |
+| `make test` | 8 pacotes Go ok; Vitest 18/18 |
+| `go mod tidy -diff` / `make gen` ×2 / `make build` | limpo / idempotente / ok |
+| Stack real: `migrate-down`/`migrate-up`, curl, `make check-invariants` | versão 8, dirty = false; transferência 201 e reenvio com a mesma chave 201 + `Idempotent-Replayed: true`; Corrente 150000 / Poupança 150000 / total 300000 (inalterado); nenhuma violação |
+
 ## Próxima tarefa
-F2.3 — transferências: migration `transfers` + `transfer_id`, criação atômica com idempotência (primeiro uso do middleware), travando as duas contas e exigindo que estejam ativas; listagem; estorno de movimento. Depois F2.4 (telas de contas, extrato e transferência + `MoneyInput` + gerador de `Idempotency-Key`).
+F2.4 — web: telas de contas (saldos, consolidado, extrato paginado, criar/editar/arquivar) e de transferência, `lib/money.ts` + `MoneyInput` (dígitos → centavos, sem float), gerador de `Idempotency-Key` por submissão (reutilizado em retentativas) e estado offline.
 
 ## Pendências reais
 - **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair.

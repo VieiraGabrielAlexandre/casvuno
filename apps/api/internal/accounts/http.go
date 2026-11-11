@@ -11,16 +11,20 @@ import (
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/kernel"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/authctx"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/httpx"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/idempotency"
 )
 
-// Handler exposes account routes; any active member may operate accounts.
+// Handler exposes account and transfer routes; any active member may operate them.
 type Handler struct {
-	svc *Service
-	log *slog.Logger
+	svc  *Service
+	idem *idempotency.Middleware
+	log  *slog.Logger
 }
 
 // NewHandler builds the accounts HTTP handler.
-func NewHandler(svc *Service, log *slog.Logger) *Handler { return &Handler{svc: svc, log: log} }
+func NewHandler(svc *Service, idem *idempotency.Middleware, log *slog.Logger) *Handler {
+	return &Handler{svc: svc, idem: idem, log: log}
+}
 
 // Routes registers routes relative to /households/{householdId} (behind RequireMember).
 func (h *Handler) Routes(r chi.Router) {
@@ -29,6 +33,9 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/accounts/{accountId}", h.get)
 	r.Patch("/accounts/{accountId}", h.update)
 	r.Get("/accounts/{accountId}/movements", h.statement)
+
+	r.Get("/transfers", h.listTransfers)
+	r.With(h.idem.Require).Post("/transfers", h.createTransfer) // ADR 0007
 }
 
 type accountResponse struct {
@@ -168,6 +175,7 @@ type movementResponse struct {
 	AmountCents  int64     `json:"amountCents"`
 	PostedOn     string    `json:"postedOn"`
 	Kind         string    `json:"kind"`
+	TransferID   *string   `json:"transferId"`
 	ReversalOfID *string   `json:"reversalOfId"`
 	Description  string    `json:"description"`
 	CreatedAt    time.Time `json:"createdAt"`
@@ -197,14 +205,10 @@ func (h *Handler) statement(w http.ResponseWriter, r *http.Request) {
 	}
 	page := httpx.Page[movementResponse]{Items: make([]movementResponse, 0, len(movements))}
 	for _, mv := range movements {
-		var reversalOf *string
-		if mv.ReversalOfID != nil {
-			s := mv.ReversalOfID.String()
-			reversalOf = &s
-		}
 		page.Items = append(page.Items, movementResponse{
 			ID: mv.ID.String(), Direction: mv.Direction, AmountCents: mv.AmountCents,
-			PostedOn: kernel.FormatDate(mv.PostedOn), Kind: mv.Kind, ReversalOfID: reversalOf,
+			PostedOn: kernel.FormatDate(mv.PostedOn), Kind: mv.Kind,
+			TransferID: uuidString(mv.TransferID), ReversalOfID: uuidString(mv.ReversalOfID),
 			Description: mv.Description, CreatedAt: mv.CreatedAt,
 		})
 	}
@@ -216,6 +220,11 @@ func (h *Handler) statement(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseStatementQuery(r *http.Request) (StatementQuery, error) {
+	return parsePageQuery(r)
+}
+
+// parsePageQuery reads limit, cursor and the from/to date filters shared by keyset lists.
+func parsePageQuery(r *http.Request) (StatementQuery, error) {
 	limit, err := httpx.ParseLimit(r)
 	if err != nil {
 		return StatementQuery{}, err
@@ -266,6 +275,14 @@ func parseDateField(field, raw string) (time.Time, error) {
 	return d, nil
 }
 
+func uuidString(id *uuid.UUID) *string {
+	if id == nil {
+		return nil
+	}
+	s := id.String()
+	return &s
+}
+
 // parseUUIDPtr converts an already validated (`uuid` tag) optional UUID.
 func parseUUIDPtr(s *string) *uuid.UUID {
 	if s == nil {
@@ -273,4 +290,89 @@ func parseUUIDPtr(s *string) *uuid.UUID {
 	}
 	id := uuid.MustParse(*s)
 	return &id
+}
+
+type transferResponse struct {
+	ID                string    `json:"id"`
+	FromAccountID     string    `json:"fromAccountId"`
+	FromAccountName   string    `json:"fromAccountName"`
+	ToAccountID       string    `json:"toAccountId"`
+	ToAccountName     string    `json:"toAccountName"`
+	AmountCents       int64     `json:"amountCents"`
+	PostedOn          string    `json:"postedOn"`
+	Description       string    `json:"description"`
+	CreatedByMemberID string    `json:"createdByMemberId"`
+	CreatedAt         time.Time `json:"createdAt"`
+}
+
+func toTransferResponse(t Transfer) transferResponse {
+	return transferResponse{
+		ID: t.ID.String(), FromAccountID: t.FromAccountID.String(), FromAccountName: t.FromAccountName,
+		ToAccountID: t.ToAccountID.String(), ToAccountName: t.ToAccountName, AmountCents: t.AmountCents,
+		PostedOn: kernel.FormatDate(t.PostedOn), Description: t.Description,
+		CreatedByMemberID: t.CreatedByMemberID.String(), CreatedAt: t.CreatedAt,
+	}
+}
+
+type createTransferRequest struct {
+	FromAccountID string `json:"fromAccountId" validate:"required,uuid"`
+	ToAccountID   string `json:"toAccountId" validate:"required,uuid"`
+	AmountCents   int64  `json:"amountCents" validate:"required"`
+	PostedOn      string `json:"postedOn" validate:"required"`
+	Description   string `json:"description,omitempty" validate:"max=200"`
+}
+
+func (h *Handler) createTransfer(w http.ResponseWriter, r *http.Request) {
+	var req createTransferRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	postedOn, err := parseDateField("postedOn", req.PostedOn)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	m, _ := authctx.MembershipFrom(r.Context())
+	t, err := h.svc.CreateTransfer(r.Context(), m, TransferInput{
+		FromAccountID: uuid.MustParse(req.FromAccountID), ToAccountID: uuid.MustParse(req.ToAccountID), // validated by tags
+		AmountCents: req.AmountCents, PostedOn: postedOn, Description: req.Description,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, toTransferResponse(t))
+}
+
+func (h *Handler) listTransfers(w http.ResponseWriter, r *http.Request) {
+	pq, err := parsePageQuery(r)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	q := TransferQuery{From: pq.From, To: pq.To, After: pq.After, Limit: pq.Limit}
+	if raw := r.URL.Query().Get("accountId"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, h.log, validation("accountId", "uuid", "Conta inválida."))
+			return
+		}
+		q.AccountID = &id
+	}
+	m, _ := authctx.MembershipFrom(r.Context())
+	list, next, err := h.svc.ListTransfers(r.Context(), m, q)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	page := httpx.Page[transferResponse]{Items: make([]transferResponse, 0, len(list))}
+	for _, t := range list {
+		page.Items = append(page.Items, toTransferResponse(t))
+	}
+	if next != nil {
+		c := httpx.EncodeCursor(cursorPosition{PostedOn: kernel.FormatDate(next.PostedOn), ID: next.ID.String()})
+		page.NextCursor = &c
+	}
+	httpx.WriteJSON(w, http.StatusOK, page)
 }

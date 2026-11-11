@@ -36,7 +36,51 @@ func runWithPostgres(m *testing.M) int {
 		return 1
 	}
 	databaseURL = url
-	return m.Run()
+	code := m.Run()
+	// Every test left the shared database in a consistent state (infra/sql/check-invariants.sql).
+	if violations, err := invariantViolations(context.Background(), url); err != nil || len(violations) > 0 {
+		fmt.Fprintln(os.Stderr, "financial invariants violated after the test run:", violations, err)
+		return 1
+	}
+	return code
+}
+
+// invariantViolations runs infra/sql/check-invariants.sql and returns one line per violation.
+func invariantViolations(ctx context.Context, url string) ([]string, error) {
+	sql, err := os.ReadFile("../../../../infra/sql/check-invariants.sql")
+	if err != nil {
+		return nil, err
+	}
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+	rows, err := conn.Query(ctx, string(sql))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var inv, ref, detail string
+		if err := rows.Scan(&inv, &ref, &detail); err != nil {
+			return nil, err
+		}
+		out = append(out, inv+" "+ref+": "+detail)
+	}
+	return out, rows.Err()
+}
+
+func assertInvariants(t *testing.T) {
+	t.Helper()
+	violations, err := invariantViolations(context.Background(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) > 0 {
+		t.Fatalf("financial invariants violated: %v", violations)
+	}
 }
 
 // TestMigrationsUpDownUp runs the full migration cycle on a separate, empty database.
@@ -48,7 +92,7 @@ func TestMigrationsUpDownUp(t *testing.T) {
 	}
 	assertSchema(t, url, true)
 
-	if err := postgres.MigrateDown(url, 6); err != nil {
+	if err := postgres.MigrateDown(url, 7); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 	assertSchema(t, url, false)
@@ -127,7 +171,7 @@ func assertSchema(t *testing.T, url string, want bool) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close(ctx)
-	for _, table := range []string{"users", "sessions", "households", "household_members", "household_invites", "audit_events", "categories", "idempotency_keys", "accounts", "account_movements"} {
+	for _, table := range []string{"users", "sessions", "households", "household_members", "household_invites", "audit_events", "categories", "idempotency_keys", "accounts", "account_movements", "transfers"} {
 		var exists bool
 		if err := conn.QueryRow(ctx, "SELECT to_regclass('public.' || $1) IS NOT NULL", table).Scan(&exists); err != nil {
 			t.Fatalf("query: %v", err)
@@ -141,7 +185,7 @@ func assertSchema(t *testing.T, url string, want bool) {
 		t.Fatalf("query: %v", err)
 	}
 	if !citext {
-		t.Error("citext (migration 1) must remain after reverting migrations 2-7")
+		t.Error("citext (migration 1) must remain after reverting migrations 2-8")
 	}
 }
 

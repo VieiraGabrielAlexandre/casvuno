@@ -53,6 +53,71 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) er
 	return err
 }
 
+const createMovement = `-- name: CreateMovement :exec
+INSERT INTO account_movements (id, household_id, account_id, direction, amount_cents, posted_on, kind, transfer_id, reversal_of_id, description)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10)
+`
+
+type CreateMovementParams struct {
+	ID           uuid.UUID
+	HouseholdID  uuid.UUID
+	AccountID    uuid.UUID
+	Direction    string
+	AmountCents  int64
+	PostedOn     time.Time
+	Kind         string
+	TransferID   *uuid.UUID
+	ReversalOfID *uuid.UUID
+	Description  string
+}
+
+func (q *Queries) CreateMovement(ctx context.Context, arg CreateMovementParams) error {
+	_, err := q.db.Exec(ctx, createMovement,
+		arg.ID,
+		arg.HouseholdID,
+		arg.AccountID,
+		arg.Direction,
+		arg.AmountCents,
+		arg.PostedOn,
+		arg.Kind,
+		arg.TransferID,
+		arg.ReversalOfID,
+		arg.Description,
+	)
+	return err
+}
+
+const createTransfer = `-- name: CreateTransfer :exec
+INSERT INTO transfers (id, household_id, from_account_id, to_account_id, amount_cents, posted_on, description, created_by_member_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+`
+
+type CreateTransferParams struct {
+	ID                uuid.UUID
+	HouseholdID       uuid.UUID
+	FromAccountID     uuid.UUID
+	ToAccountID       uuid.UUID
+	AmountCents       int64
+	PostedOn          time.Time
+	Description       string
+	CreatedByMemberID uuid.UUID
+}
+
+func (q *Queries) CreateTransfer(ctx context.Context, arg CreateTransferParams) error {
+	_, err := q.db.Exec(ctx, createTransfer,
+		arg.ID,
+		arg.HouseholdID,
+		arg.FromAccountID,
+		arg.ToAccountID,
+		arg.AmountCents,
+		arg.PostedOn,
+		arg.Description,
+		arg.CreatedByMemberID,
+	)
+	return err
+}
+
 const getAccount = `-- name: GetAccount :one
 SELECT a.id, a.name, a.type, a.ownership, a.owner_member_id, a.opening_balance_cents, a.opened_on,
        a.is_active, a.created_at,
@@ -97,6 +162,51 @@ func (q *Queries) GetAccount(ctx context.Context, arg GetAccountParams) (GetAcco
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.BalanceCents,
+	)
+	return i, err
+}
+
+const getTransfer = `-- name: GetTransfer :one
+SELECT t.id, t.from_account_id, fa.name AS from_account_name, t.to_account_id, ta.name AS to_account_name,
+       t.amount_cents, t.posted_on, t.description, t.created_by_member_id, t.created_at
+FROM transfers t
+JOIN accounts fa ON fa.household_id = t.household_id AND fa.id = t.from_account_id
+JOIN accounts ta ON ta.household_id = t.household_id AND ta.id = t.to_account_id
+WHERE t.household_id = $1 AND t.id = $2
+`
+
+type GetTransferParams struct {
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+type GetTransferRow struct {
+	ID                uuid.UUID
+	FromAccountID     uuid.UUID
+	FromAccountName   string
+	ToAccountID       uuid.UUID
+	ToAccountName     string
+	AmountCents       int64
+	PostedOn          time.Time
+	Description       string
+	CreatedByMemberID uuid.UUID
+	CreatedAt         time.Time
+}
+
+func (q *Queries) GetTransfer(ctx context.Context, arg GetTransferParams) (GetTransferRow, error) {
+	row := q.db.QueryRow(ctx, getTransfer, arg.HouseholdID, arg.ID)
+	var i GetTransferRow
+	err := row.Scan(
+		&i.ID,
+		&i.FromAccountID,
+		&i.FromAccountName,
+		&i.ToAccountID,
+		&i.ToAccountName,
+		&i.AmountCents,
+		&i.PostedOn,
+		&i.Description,
+		&i.CreatedByMemberID,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -167,7 +277,7 @@ func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]L
 }
 
 const listMovements = `-- name: ListMovements :many
-SELECT id, direction, amount_cents, posted_on, kind, reversal_of_id, description, created_at
+SELECT id, direction, amount_cents, posted_on, kind, transfer_id, reversal_of_id, description, created_at
 FROM account_movements
 WHERE household_id = $1 AND account_id = $2
   AND ($3::date IS NULL OR posted_on >= $3::date)
@@ -194,6 +304,7 @@ type ListMovementsRow struct {
 	AmountCents  int64
 	PostedOn     time.Time
 	Kind         string
+	TransferID   *uuid.UUID
 	ReversalOfID *uuid.UUID
 	Description  string
 	CreatedAt    time.Time
@@ -223,8 +334,90 @@ func (q *Queries) ListMovements(ctx context.Context, arg ListMovementsParams) ([
 			&i.AmountCents,
 			&i.PostedOn,
 			&i.Kind,
+			&i.TransferID,
 			&i.ReversalOfID,
 			&i.Description,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTransfers = `-- name: ListTransfers :many
+SELECT t.id, t.from_account_id, fa.name AS from_account_name, t.to_account_id, ta.name AS to_account_name,
+       t.amount_cents, t.posted_on, t.description, t.created_by_member_id, t.created_at
+FROM transfers t
+JOIN accounts fa ON fa.household_id = t.household_id AND fa.id = t.from_account_id
+JOIN accounts ta ON ta.household_id = t.household_id AND ta.id = t.to_account_id
+WHERE t.household_id = $1
+  AND ($2::uuid IS NULL
+       OR t.from_account_id = $2::uuid OR t.to_account_id = $2::uuid)
+  AND ($3::date IS NULL OR t.posted_on >= $3::date)
+  AND ($4::date IS NULL OR t.posted_on <= $4::date)
+  AND ($5::date IS NULL
+       OR (t.posted_on, t.id) < ($5::date, $6::uuid))
+ORDER BY t.posted_on DESC, t.id DESC
+LIMIT $7
+`
+
+type ListTransfersParams struct {
+	HouseholdID   uuid.UUID
+	AccountID     *uuid.UUID
+	FromDate      *time.Time
+	ToDate        *time.Time
+	AfterPostedOn *time.Time
+	AfterID       *uuid.UUID
+	RowLimit      int32
+}
+
+type ListTransfersRow struct {
+	ID                uuid.UUID
+	FromAccountID     uuid.UUID
+	FromAccountName   string
+	ToAccountID       uuid.UUID
+	ToAccountName     string
+	AmountCents       int64
+	PostedOn          time.Time
+	Description       string
+	CreatedByMemberID uuid.UUID
+	CreatedAt         time.Time
+}
+
+// Transfers newest first, keyset-paginated on (posted_on, id); optional account filter
+// matches either side.
+func (q *Queries) ListTransfers(ctx context.Context, arg ListTransfersParams) ([]ListTransfersRow, error) {
+	rows, err := q.db.Query(ctx, listTransfers,
+		arg.HouseholdID,
+		arg.AccountID,
+		arg.FromDate,
+		arg.ToDate,
+		arg.AfterPostedOn,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTransfersRow
+	for rows.Next() {
+		var i ListTransfersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FromAccountID,
+			&i.FromAccountName,
+			&i.ToAccountID,
+			&i.ToAccountName,
+			&i.AmountCents,
+			&i.PostedOn,
+			&i.Description,
+			&i.CreatedByMemberID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

@@ -51,8 +51,8 @@ func (c *client) accounts(householdID, query string) accountListDTO {
 	return l
 }
 
-// insertMovement writes a cash movement directly: until transfers (F2.3) and payments (F3)
-// exist, no API creates movements, but balance and statement must already be correct.
+// insertMovement writes a non-transfer cash movement directly: until payments (F3) exist, no
+// API creates them, but balance and statement must already be correct.
 func (api *testAPI) insertMovement(householdID, accountID, direction string, cents int64, postedOn, kind string, reversalOf *string) string {
 	api.t.Helper()
 	var id string
@@ -104,8 +104,7 @@ func TestBalanceIsDerivedFromMovements(t *testing.T) {
 	api.insertMovement(h.ID, a.ID, "IN", 5000, "2026-11-02", "DIRECT_RECEIPT", nil)
 	out := api.insertMovement(h.ID, a.ID, "OUT", 1250, "2026-11-03", "DIRECT_PAYMENT", nil)
 	api.insertMovement(h.ID, a.ID, "IN", 1250, "2026-11-04", "REVERSAL", &out)
-	api.insertMovement(h.ID, a.ID, "OUT", 3000, "2026-11-05", "TRANSFER", nil)
-	api.insertMovement(h.ID, b.ID, "IN", 3000, "2026-11-05", "TRANSFER", nil)
+	owner.transfer(h.ID, a.ID, b.ID, 3000, "2026-11-05")
 
 	var got accountDTO
 	owner.expect(http.StatusOK, http.MethodGet, "/api/v1/households/"+h.ID+"/accounts/"+a.ID, nil).decode(t, &got)
@@ -240,7 +239,7 @@ func TestArchiveRequiresZeroBalanceAndFreezesTheAccount(t *testing.T) {
 	}
 
 	// Once the money leaves (here: a movement), the account can be archived.
-	api.insertMovement(h.ID, a.ID, "OUT", 10000, "2026-11-05", "TRANSFER", nil)
+	api.insertMovement(h.ID, a.ID, "OUT", 10000, "2026-11-05", "DIRECT_PAYMENT", nil)
 	var archived accountDTO
 	owner.expect(http.StatusOK, http.MethodPatch, path, map[string]any{"isActive": false}).decode(t, &archived)
 	if archived.IsActive || archived.BalanceCents != 0 {

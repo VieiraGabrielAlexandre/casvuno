@@ -71,7 +71,7 @@ casvuno/
     └── scripts/backup.sh  restore-test.sh
 ```
 
-**Comandos (Makefile):** existentes: `setup`, `up`, `down`, `logs`, `ps`, `dev`, `web`, `api`, `migrate-up`, `migrate-down`, `test`, `test-unit`, `lint`, `fmt`, `build`. Também existentes: `gen`, `migrate-new`. Previstos: `seed` (F1.5), `e2e` (F8.5), `backup`, `restore-test` e `check-invariants` (F8.3).
+**Comandos (Makefile):** existentes: `setup`, `up`, `down`, `logs`, `ps`, `dev`, `web`, `api`, `migrate-up`, `migrate-down`, `test`, `test-unit`, `lint`, `fmt`, `build`. Também existentes: `gen`, `migrate-new`, `check-invariants`. Previstos: `seed`, `e2e` (F8.5), `backup`, `restore-test` e `check-invariants` (F8.3).
 
 **Dependências previstas (todas gratuitas/OSS).** Go: `fx`, `chi/v5`, `pgx/v5`, `golang-migrate/v4`, `validator/v10`, `google/uuid`, `x/crypto` (argon2), `x/time` (rate); em teste, `testcontainers-go` e `kin-openapi`. Ferramentas: `sqlc`, `golangci-lint`. Web: `next`, `react`, `typescript`, `tailwindcss`, shadcn/ui (copiado), `@tanstack/react-query`, `react-hook-form`, `zod`, `@hookform/resolvers`, `recharts`, `openapi-fetch`; dev: `openapi-typescript`, `vitest`, `@testing-library/react`, `@playwright/test`, `eslint`, `prettier`. **Qualquer dependência fora desta lista exige justificativa no PR.**
 
@@ -112,13 +112,13 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 
 ### F2 — Contas, idempotência e transferências
 
-**Entrega 4 (2026-11-10):** F2.1 concluída. **Entrega 5:** F2.2 concluída (API; telas de contas na F2.4). Gerador de `Idempotency-Key` no web (`lib/idempotency.ts`) entra na F2.4, com o primeiro formulário financeiro.
+**Entrega 4 (2026-11-10):** F2.1 concluída. **Entrega 5:** F2.2 concluída (API; telas de contas na F2.4). **Entrega 6:** F2.3 concluída (API). Gerador de `Idempotency-Key` no web (`lib/idempotency.ts`) entra na F2.4, com o primeiro formulário financeiro.
 
 | ID | Tarefa | Dep. | Aceite | Verificar |
 |---|---|---|---|---|
 | F2.1 | Migration `idempotency_keys` + `platform/idempotency` (ADR 0007) | F1.4 | T09, T10 e duas requisições concorrentes com a mesma chave → uma operação e um replay | `make test` | ✅ (entrega 4; middleware pronto, primeiro uso real em F2.3) |
 | F2.2 | Migration `accounts`/`account_movements`/`transfers`; CRUD de contas (owner obrigatório se INDIVIDUAL), saldo (INV-09), extrato paginado; arquivar só com saldo 0 | F1.5 | T21; RN-017; ordenação estável no extrato | `make test` | ✅ (entrega 5; `transfers` foi para a F2.3, junto com o primeiro uso) |
-| F2.3 | Migration `transfers` (+ `account_movements.transfer_id`); transferência atômica + listagem, travando as duas contas (`FOR UPDATE`) e exigindo contas ativas (corrida com o arquivamento); estorno de movimento interno (usado depois pelo void) | F2.1, F2.2 | T04; origem = destino → 422; conta de outra família → 422 (T15); `check-invariants` INV-08 | `make test` |
+| F2.3 | Migration `transfers` (+ `account_movements.transfer_id`); transferência atômica + listagem, travando as duas contas (`FOR UPDATE`) e exigindo contas ativas (corrida com o arquivamento); estorno de movimento interno (usado depois pelo void) | F2.1, F2.2 | T04; origem = destino → 422; conta de outra família → 422 (T15); `check-invariants` INV-08 | `make test` | ✅ (entrega 6; estorno de movimento ↪ **F3.3**, junto com o void, seu primeiro consumidor) |
 | F2.4 | Web: contas (saldos, extrato), formulário de transferência, componente `MoneyInput`, padrão de mutação com idempotência e estado offline | F2.3 | Vitest em `MoneyInput`; E2E de transferência com consolidado inalterado | `pnpm -C apps/web test && make e2e` |
 
 ### F3 — Lançamentos (ledger)
@@ -127,7 +127,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 |---|---|---|---|---|
 | F3.1 | Migration `transactions`/`obligations`/`obligation_payments`; criar despesa/receita **imediata** (conta) | F2.3 | T01, T02, T03; categoria de `kind` errado → 422; INV-03/04/05 | `make test` |
 | F3.2 | Despesa/receita **prevista**; `GET /obligations` (pendentes, vencidas, período); `POST /obligations/:id/payments` (parcial, confirma na 1ª, lock); `PATCH /obligations/:id` (PLANNED) | F3.1 | T22; consumo só aparece depois da confirmação; pagamentos concorrentes nunca excedem o valor | `make test` |
-| F3.3 | Listar/filtrar transações (período, categoria, conta, pessoa, escopo, meio, texto) com keyset; detalhe; `PATCH` não estrutural; void de não-cartão (estorna movimentos) | F3.2 | RN-025; INV-19; void idempotente | `make test` |
+| F3.3 | Listar/filtrar transações (período, categoria, conta, pessoa, escopo, meio, texto) com keyset; detalhe; `PATCH` não estrutural; void de não-cartão; **estorno de movimento** (`accounts`, vindo da F2.3: movimento `REVERSAL` espelhado, INV-18) usado pelo void | F3.2 | RN-025; INV-19; void idempotente | `make test` |
 | F3.4 | Migration `quick_templates`; CRUD de favoritos; "repetir último" (`GET transactions?createdBy=me&limit=1`) | F3.1 | Favorito de outra família/usuário inacessível | `make test` |
 | F3.5 | Web: lançamento rápido (FAB `+`, valor em destaque, hoje por padrão, imediato/previsto), favoritos, lista de transações com filtros, pendências com pagamento, "Corrigir" (void + novo) | F3.4 | E2E: favorito completo confirmado em ≤ 3 interações; offline sem falso sucesso (T19 parcial) | `make e2e` |
 
@@ -178,7 +178,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 |---|---|---|---|---|
 | F8.1 | Manifest, `sw.js` (só assets versionados e shell, **nunca** `/api`), banner offline, aviso de atualização | F3.5 | T19; teste garante que o SW ignora `/api/*` | `make e2e` |
 | F8.2 | `compose.prod.yaml`, Caddyfile (TLS, HSTS, CSP, proxy), `docs/deployment.md` (runbook, variáveis, exclusão de família, rotação de segredos) | F0.8 | Stack prod sobe localmente com TLS interno do Caddy | `docker compose -f infra/compose.prod.yaml up` |
-| F8.3 | `infra/scripts/backup.sh` + `restore-test.sh` + `check-invariants.sql` completo | F6.1 | `make backup && make restore-test` passa | idem |
+| F8.3 | `infra/scripts/backup.sh` + `restore-test.sh` + `check-invariants.sql` completo (o arquivo e `make check-invariants` já existem desde a F2.3, com INV-08 e INV-18) | F6.1 | `make backup && make restore-test` passa | idem |
 | F8.4 | Revisão de segurança: suíte de isolamento cobrindo 100% das rotas, rate limit de convites, auditoria em todas as mutações, revisão de logs sem dados sensíveis | todas | Checklist do `AGENTS.md` §7 marcado | `make test` |
 | F8.5 | **Suíte E2E (Playwright) de todo o produto** + `make e2e` + job no CI: cadastro → família → convite → aceite; gasto rápido por favorito (≤ 3 interações); compra parcelada → fatura → pagamento; dashboard separando métricas (T18); offline (T19); viewport mobile. Acessibilidade (contraste AA, teclado, labels) | F6.6, F7.3, F8.1 | E2E verde em desktop e mobile; os E2E adiados das fases F1–F7 cobertos | `make e2e` |
 
@@ -218,7 +218,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | 000005 | categories | F1.5 ✅ |
 | 000006 | idempotency_keys (`response_body bytea`, I-41) | F2.1 ✅ |
 | 000007 | accounts, account_movements (append-only por trigger) | F2.2 ✅ |
-| 000008 | transfers + ALTER account_movements (transfer_id) | F2.3 |
+| 000008 | transfers + ALTER account_movements (transfer_id) | F2.3 ✅ |
 | 000009 | transactions, obligations, obligation_payments | F3.1 |
 | 000010 | quick_templates | F3.4 |
 | 000011 | credit_cards | F4.2 |

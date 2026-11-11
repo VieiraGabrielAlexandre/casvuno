@@ -340,6 +340,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/households/{householdId}/transfers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        /** Histórico de transferências (mais recentes primeiro; paginação por cursor) */
+        get: operations["listTransfers"];
+        put?: never;
+        /**
+         * Transferir entre duas contas ativas da família (RN-007)
+         * @description Grava a transferência e duas movimentações (saída na origem, entrada no destino) atomicamente.
+         *     Não é receita nem despesa e não altera o caixa consolidado. Saldo negativo é permitido.
+         *     Imutável na V1: para corrigir, faça a transferência inversa.
+         */
+        post: operations["createTransfer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -567,6 +592,11 @@ export interface components {
             postedOn: components["schemas"]["Date"];
             /** @enum {string} */
             kind: "DIRECT_PAYMENT" | "DIRECT_RECEIPT" | "INVOICE_PAYMENT" | "TRANSFER" | "REVERSAL";
+            /**
+             * Format: uuid
+             * @description Preenchido se kind = TRANSFER
+             */
+            transferId: string | null;
             /** Format: uuid */
             reversalOfId: string | null;
             description: string;
@@ -576,6 +606,37 @@ export interface components {
         MovementPage: {
             items: components["schemas"]["Movement"][];
             nextCursor: string | null;
+        };
+        Transfer: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            fromAccountId: string;
+            fromAccountName: string;
+            /** Format: uuid */
+            toAccountId: string;
+            toAccountName: string;
+            amountCents: number;
+            postedOn: components["schemas"]["Date"];
+            description: string;
+            /** Format: uuid */
+            createdByMemberId: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        TransferPage: {
+            items: components["schemas"]["Transfer"][];
+            nextCursor: string | null;
+        };
+        CreateTransferRequest: {
+            /** Format: uuid */
+            fromAccountId: string;
+            /** Format: uuid */
+            toAccountId: string;
+            amountCents: number;
+            postedOn: components["schemas"]["Date"];
+            /** @description Padrão "Transferência" */
+            description?: string;
         };
     };
     responses: {
@@ -1264,6 +1325,81 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    listTransfers: {
+        parameters: {
+            query?: {
+                /** @description Itens por página (padrão 25). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Valor opaco de `nextCursor` da página anterior. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Só transferências em que a conta é origem ou destino */
+                accountId?: string;
+                from?: components["schemas"]["Date"];
+                to?: components["schemas"]["Date"];
+            };
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Página de transferências */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createTransfer: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+                 *     Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+                 *     Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+                 *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTransferRequest"];
+            };
+        };
+        responses: {
+            /** @description Transferência criada (ou repetida com a mesma Idempotency-Key) */
+            201: {
+                headers: {
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
 }

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.5.0
+  version: 0.6.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -17,6 +17,7 @@ tags:
   - name: invites
   - name: categories
   - name: accounts
+  - name: transfers
 
 paths:
   /health:
@@ -476,6 +477,65 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /api/v1/households/{householdId}/transfers:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+    get:
+      tags: [transfers]
+      operationId: listTransfers
+      summary: Histórico de transferências (mais recentes primeiro; paginação por cursor)
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: accountId
+          in: query
+          description: Só transferências em que a conta é origem ou destino
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          schema: { $ref: "#/components/schemas/Date" }
+        - name: to
+          in: query
+          schema: { $ref: "#/components/schemas/Date" }
+      responses:
+        "200":
+          description: Página de transferências
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferPage" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [transfers]
+      operationId: createTransfer
+      summary: Transferir entre duas contas ativas da família (RN-007)
+      description: |
+        Grava a transferência e duas movimentações (saída na origem, entrada no destino) atomicamente.
+        Não é receita nem despesa e não altera o caixa consolidado. Saldo negativo é permitido.
+        Imutável na V1: para corrigir, faça a transferência inversa.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTransferRequest" }
+      responses:
+        "201":
+          description: Transferência criada (ou repetida com a mesma Idempotency-Key)
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transfer" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
 security:
   - sessionCookie: []
 
@@ -852,13 +912,14 @@ components:
     Movement:
       type: object
       additionalProperties: false
-      required: [id, direction, amountCents, postedOn, kind, reversalOfId, description, createdAt]
+      required: [id, direction, amountCents, postedOn, kind, transferId, reversalOfId, description, createdAt]
       properties:
         id: { type: string, format: uuid }
         direction: { type: string, enum: [IN, OUT] }
         amountCents: { type: integer, minimum: 1 }
         postedOn: { $ref: "#/components/schemas/Date" }
         kind: { type: string, enum: [DIRECT_PAYMENT, DIRECT_RECEIPT, INVOICE_PAYMENT, TRANSFER, REVERSAL] }
+        transferId: { type: [string, "null"], format: uuid, description: Preenchido se kind = TRANSFER }
         reversalOfId: { type: [string, "null"], format: uuid }
         description: { type: string }
         createdAt: { type: string, format: date-time }
@@ -872,3 +933,43 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Movement" }
         nextCursor: { type: [string, "null"] }
+
+    Transfer:
+      type: object
+      additionalProperties: false
+      required: [id, fromAccountId, fromAccountName, toAccountId, toAccountName, amountCents, postedOn, description, createdByMemberId, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        fromAccountId: { type: string, format: uuid }
+        fromAccountName: { type: string }
+        toAccountId: { type: string, format: uuid }
+        toAccountName: { type: string }
+        amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        postedOn: { $ref: "#/components/schemas/Date" }
+        description: { type: string }
+        createdByMemberId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+
+    TransferPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Transfer" }
+        nextCursor: { type: [string, "null"] }
+
+    CreateTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [fromAccountId, toAccountId, amountCents, postedOn]
+      properties:
+        fromAccountId: { type: string, format: uuid }
+        toAccountId: { type: string, format: uuid }
+        amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        postedOn: { $ref: "#/components/schemas/Date" }
+        description:
+          type: string
+          maxLength: 200
+          description: Padrão "Transferência"

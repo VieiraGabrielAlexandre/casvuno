@@ -31,7 +31,7 @@
 - pagamento de obrigação e confirmação: `FOR UPDATE` na obrigação;
 - inserção de parcela e fechamento: `FOR UPDATE` na fatura;
 - void: `FOR UPDATE` na transação;
-- transferência: sem verificação de saldo (ADR 0002); a atomicidade das duas pernas vem da transação SQL;
+- transferência (F2.3): `FOR UPDATE` nas duas contas **em ordem fixa de ID** (evita deadlock entre transferências em sentidos opostos) e exige contas ativas (evita a corrida com o arquivamento); sem verificação de saldo (ADR 0002); as duas pernas na mesma transação SQL. Testado com 20 transferências simultâneas em sentidos opostos;
 - jobs do worker: `pg_try_advisory_xact_lock(job_id)` + `ON CONFLICT DO NOTHING`.
 
 **Teste T17:** N goroutines pagam o saldo total ao mesmo tempo, com chaves diferentes. Exatamente uma é aceita e as demais recebem 422 `AMOUNT_EXCEEDS_OUTSTANDING`.
