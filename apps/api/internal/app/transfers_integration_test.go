@@ -3,6 +3,7 @@
 package app
 
 import (
+	"maps"
 	"net/http"
 	"sync"
 	"testing"
@@ -293,7 +294,34 @@ func TestInvariantCheckerDetectsViolations(t *testing.T) {
 		          'OUT', 50, '2026-11-10', 'DIRECT_PAYMENT', 'x');
 		INSERT INTO account_movements (id, household_id, account_id, direction, amount_cents, posted_on, kind, reversal_of_id, description)
 		  VALUES ('00000000-0000-7000-8000-000000000009', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000004',
-		          'OUT', 50, '2026-11-10', 'REVERSAL', '00000000-0000-7000-8000-000000000008', 'x');`)
+		          'OUT', 50, '2026-11-10', 'REVERSAL', '00000000-0000-7000-8000-000000000008', 'x');
+		INSERT INTO categories (id, household_id, name, kind) VALUES
+		  ('00000000-0000-7000-8000-00000000000a', '00000000-0000-7000-8000-000000000002', 'C', 'EXPENSE');
+		-- INV-03: a transaction without its obligation.
+		INSERT INTO transactions (id, household_id, kind, scope, created_by_member_id, description, amount_cents, category_id,
+		                          occurred_on, payment_method, account_id)
+		  VALUES ('00000000-0000-7000-8000-00000000000b', '00000000-0000-7000-8000-000000000002', 'EXPENSE', 'FAMILY',
+		          '00000000-0000-7000-8000-000000000003', 'x', 1000, '00000000-0000-7000-8000-00000000000a', '2026-11-10', 'PIX',
+		          '00000000-0000-7000-8000-000000000004');
+		INSERT INTO obligations (id, household_id, kind, source, status, amount_cents, due_on, description, category_id, scope,
+		                         payment_method, competence_on, created_by_member_id)
+		  VALUES ('00000000-0000-7000-8000-00000000000c', '00000000-0000-7000-8000-000000000002', 'PAYABLE', 'MANUAL_FORECAST',
+		          'PLANNED', 100, '2026-11-10', 'x', '00000000-0000-7000-8000-00000000000a', 'FAMILY', 'PIX', '2026-11-10',
+		          '00000000-0000-7000-8000-000000000003');
+		-- INV-04: 150 paid on an obligation of 100.
+		INSERT INTO account_movements (id, household_id, account_id, direction, amount_cents, posted_on, kind, description)
+		  VALUES ('00000000-0000-7000-8000-00000000000d', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000004',
+		          'OUT', 150, '2026-11-10', 'DIRECT_PAYMENT', 'x');
+		INSERT INTO obligation_payments (id, household_id, obligation_id, account_movement_id, amount_cents, paid_on, created_by_member_id)
+		  VALUES ('00000000-0000-7000-8000-00000000000e', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-00000000000c',
+		          '00000000-0000-7000-8000-00000000000d', 150, '2026-11-10', '00000000-0000-7000-8000-000000000003');
+		-- INV-05: a payable paid by an incoming movement (the payment itself pushes INV-04 further).
+		INSERT INTO account_movements (id, household_id, account_id, direction, amount_cents, posted_on, kind, description)
+		  VALUES ('00000000-0000-7000-8000-00000000000f', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000004',
+		          'IN', 20, '2026-11-10', 'DIRECT_RECEIPT', 'x');
+		INSERT INTO obligation_payments (id, household_id, obligation_id, account_movement_id, amount_cents, paid_on, created_by_member_id)
+		  VALUES ('00000000-0000-7000-8000-000000000010', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-00000000000c',
+		          '00000000-0000-7000-8000-00000000000f', 20, '2026-11-10', '00000000-0000-7000-8000-000000000003');`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,11 +330,13 @@ func TestInvariantCheckerDetectsViolations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := map[string]bool{}
+	found := map[string]int{}
 	for _, v := range violations {
-		found[v[:6]] = true
+		found[v[:6]]++
 	}
-	if !found["INV-08"] || !found["INV-18"] || len(violations) != 2 {
-		t.Fatalf("violations = %v, want exactly INV-08 and INV-18", violations)
+	// INV-05 twice: the mismatched payment and the orphan DIRECT_PAYMENT planted for INV-18.
+	want := map[string]int{"INV-03": 1, "INV-04": 1, "INV-05": 2, "INV-08": 1, "INV-18": 1}
+	if !maps.Equal(found, want) {
+		t.Fatalf("violations = %v, want %v", violations, want)
 	}
 }

@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-**F2 concluída** — contas, idempotência e transferências (entregas 4 e 5 no PR #4, entrega 6 no PR #5; entrega 7, F2.4, ainda não commitada). Próxima: F3.1 (lançamentos imediatos).
+F3 — Lançamentos: **F3.1 concluída** (entrega 8, API, ainda não commitada). F2 completa (entregas 4–7 nos PRs #4, #5 e #6). Próxima: F3.2 (despesa/receita prevista e pagamento de obrigação).
 
 ## Concluído
 
@@ -159,16 +159,44 @@ Correções feitas durante a verificação: o golangci-lint precisou ser compila
 
 Não houve teste interativo em navegador nesta sessão (fica para a F8.5 com Playwright).
 
+### 2026-11-11 — Decisões de produto
+I-04, I-08, I-15 (deslocar compra retroativa para a próxima fatura aberta), I-18 e I-19 aprovados pelo usuário; ADRs 0002, 0003 e 0010 passaram a "Aceito".
+
+### 2026-11-11 — Entrega 8: lançamentos imediatos (F3.1, API)
+- **Banco (`000009_ledger`):**
+  - `transactions`: FK composta `(household_id, category_id, kind)`, de modo que o banco recusa categoria de receita numa despesa; `CHECK` de `PERSONAL` com pessoa (I-43); meio de pagamento sem `CREDIT_CARD` até a F4.3.
+  - `obligations`: com os campos de rascunho do I-08 e `CHECK` de previsão ⇔ sem transação.
+  - `obligation_payments`: append-only, um movimento por pagamento.
+  - `categories`: ganhou `UNIQUE(household_id, id, kind)`.
+- **Módulo `ledger` (novo):** `Create` grava, numa transação SQL, o movimento de caixa (que trava a conta), a transação, a obrigação `CONFIRMED`/`DIRECT`, o pagamento e a auditoria `transaction.created` (sem valor nem descrição nos metadados). Valida tipo, escopo, valor (1..10^15), descrição (1..200, aparada), estabelecimento (≤ 120), observações (≤ 1000; vazias viram `null`), modo `IMMEDIATE`, meio e conta. Referências do corpo verificadas na família: categoria (`CATEGORY_NOT_FOUND`/`CATEGORY_KIND_MISMATCH`/`CATEGORY_ARCHIVED`, com `FOR SHARE`), pessoa (`PERSON_NOT_MEMBER`), conta (`ACCOUNT_NOT_FOUND`/`ACCOUNT_ARCHIVED` no campo `payment.accountId`). `Get` por ID.
+- **`accounts.PostMovement`:** único caminho para outro módulo gravar caixa (`DIRECT_PAYMENT`/`DIRECT_RECEIPT`). Trava a conta e exige conta ativa. O ledger o usa pela interface `ledger.CashPoster` (adaptador `ledgerCash` em `internal/app`); os módulos não se importam. `categories.LockForEntry` implementa `ledger.CategoryChecker`.
+- **HTTP:** `POST /transactions` com `idempotency.Require`; `GET /transactions/{transactionId}` (adiantado da F3.3, para a F3.1 ser verificável pela API).
+- **Invariantes:** `check-invariants.sql` ganhou INV-03 (fora do cartão), INV-04, INV-05 e a recíproca do INV-05 (movimento direto sem pagamento = caixa órfão).
+- **Testes antigos:** os de contas deixaram de inserir movimentos `DIRECT_*` soltos no banco (agora seriam violação de INV-05) e usam lançamentos reais; o estorno continua inserido direto até a F3.3.
+- **Bug encontrado pelo teste de concorrência e corrigido:** inserir a transação antes de travar a conta causava deadlock (FK pega `KEY SHARE`; o `FOR UPDATE` depois vira *lock upgrade*) e transformava conta desconhecida em 500. Agora o caixa é postado primeiro. Regra registrada no ADR 0007 e no AGENTS.md.
+- **Docs:** OpenAPI 0.7.0, plano (F3.1 ✅, migration 000009 ✅), `domain-model`, ADR 0007, `spec-review` (I-43), AGENTS.md.
+
+## Comandos executados (entrega 8) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test -race -tags integration ./internal/app/` | 1ª execução: 4 falhas reais (deadlock com 17 de 20 lançamentos concorrentes em 500; conta desconhecida → 500) e 1 erro no teste (comparação de ponteiros). Depois da correção: ok. |
+| Testes novos de integração | **T01:** café de R$ 12,50 no Pix gera 1 despesa, saída `DIRECT_PAYMENT` e saldo −1250, com obrigação `CONFIRMED`/`DIRECT` paga por um pagamento; replay com `Idempotent-Replayed`, 409 com outro valor e nenhuma linha nova. **Receita:** entrada `DIRECT_RECEIPT`, obrigação `RECEIVABLE`, consumo 0. **T02/T03:** almoço pessoal de R$ 80 de um membro + mercado de R$ 300, ambos pagos pela conta individual de outro; consumo da família 38000, valores inteiros, cada membro lê o lançamento do outro. **Validação:** 20 casos com o campo certo no erro, nada gravado. **Banco:** recusa UPDATE/DELETE de pagamento, categoria de outro tipo, obrigação confirmada sem transação, `PERSONAL` sem pessoa e DELETE de transação. **Concorrência:** 20 lançamentos simultâneos na mesma conta, saldo exato. **Isolamento:** 2 rotas novas; categoria, conta ou membro de outra família → 422 sem gravar; transação de outra família → 404. **Verificador:** detecta INV-03, INV-04 e INV-05 plantadas |
+| `go test ./internal/ledger/` | unitários de `normalize`: 13 rejeições com o campo certo e limites aceitos |
+| `make lint` | 0 issues; ESLint, Prettier e `tsc` ok |
+| `make test` | 9 pacotes Go ok (novo: `ledger`); Vitest 63/63 |
+| `go mod tidy -diff` / `make gen` / `make build` | limpo / idempotente / ok (imagem e export estático) |
+| Stack real: `make up`, `migrate-down`/`migrate-up`, curl, `make check-invariants` | versão 9, dirty = false; down/up ok; café de R$ 12,50 → 201 e reenvio com a mesma chave → 201 com `Idempotent-Replayed: true`; saldo −1250; extrato com um `OUT/DIRECT_PAYMENT`; nenhuma violação |
+
 ## Próxima tarefa
-F3.1 — migration `transactions`/`obligations`/`obligation_payments` e despesa/receita **imediata** em conta (T01–T03, INV-03/04/05). Antes da F3, convém decidir I-04, I-08, I-15, I-18 e I-19 (`docs/spec-review.md`).
+F3.2 — despesa/receita **prevista** (`mode=PLANNED`, `dueOn`): obrigação `PLANNED` com rascunho; `GET /obligations` (pendentes, vencidas, período); `POST /obligations/{id}/payments` (parcial, o primeiro pagamento cria a transação com `occurred_on = competence_on`, lock na obrigação, teto pelo saldo); `PATCH /obligations/{id}` só em `PLANNED` sem pagamentos (T22; INV-13).
 
 ## Pendências reais
-- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
+- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). A F3.1 não tem tela (o lançamento rápido é a F3.5). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
 - **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
 - **Sem limpeza de sessões, convites e chaves de idempotência expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).
 - **Página de convite** não mostra o nome da família antes do aceite (não há rota pública de pré-visualização, de propósito, para não expor dados a quem só tem o link).
-- **Decisões de produto em aberto:** I-04, I-08, I-15, I-18, I-19 (`docs/spec-review.md`; afetam F3–F5). ADRs 0002, 0003, 0004, 0006, 0007, 0008, 0010, 0011 e 0012 continuam "Proposto"; o 0006 já está implementado e aguarda aceite formal.
+- **Decisões de produto:** I-04, I-08, I-15 (deslocar compra retroativa), I-18 e I-19 aprovados em 2026-11-11 (ADRs 0002, 0003 e 0010 aceitos); nenhum item [APROVAR] pendente. ADRs 0004, 0006, 0007, 0008, 0011 e 0012 continuam "Proposto"; o 0006 já está implementado e aguarda aceite formal.
 - **Web fora do Compose em dev** (decisão registrada no plano/ADR 0009). O web no Compose entra com o Caddy em F8.2.
 - **`apps/web/AGENTS.md`** é gerado e reinserido pelo `next dev`; mantido versionado.
 - O pnpm 12 marcou `sharp` e `unrs-resolver` como build não permitido (`allowBuilds: false`). O build e o lint funcionam sem eles; reavaliar se o ESLint import resolver precisar.

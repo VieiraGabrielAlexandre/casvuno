@@ -1,6 +1,6 @@
 # ADR 0002 — Modelo contábil: transações, obrigações, parcelas e movimentos
 
-- Status: Proposto (itens I-04, I-08 e I-18 requerem aprovação)
+- Status: Aceito em 2026-11-11 (I-04, I-08 e I-18 aprovados pelo usuário)
 - Data: 2026-11-10
 
 ## Contexto

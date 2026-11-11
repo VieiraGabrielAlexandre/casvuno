@@ -32,3 +32,11 @@ RETURNING *;
 UPDATE categories
 SET is_active = false, updated_at = now()
 WHERE household_id = @household_id AND parent_id = @parent_id::uuid AND is_active;
+
+-- Category of a new financial entry. FOR SHARE: concurrent entries may use it, but it cannot
+-- be archived (UPDATE) until the entry commits.
+-- name: LockCategoryForEntry :one
+SELECT kind, is_active
+FROM categories
+WHERE household_id = @household_id AND id = @id
+FOR SHARE;

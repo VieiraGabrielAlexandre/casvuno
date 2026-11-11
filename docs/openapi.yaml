@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.6.0
+  version: 0.7.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -18,6 +18,7 @@ tags:
   - name: categories
   - name: accounts
   - name: transfers
+  - name: transactions
 
 paths:
   /health:
@@ -536,6 +537,57 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
 
+  /api/v1/households/{householdId}/transactions:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+    post:
+      tags: [transactions]
+      operationId: createTransaction
+      summary: Lançar despesa ou receita imediata (paga ou recebida agora, numa conta)
+      description: |
+        Grava atomicamente a transação (consumo/receita), a obrigação confirmada, o pagamento e o movimento de caixa
+        (saída para despesa, entrada para receita). O valor conta uma vez para a família, quem quer que tenha pago ou
+        consumido (sem divisão entre membros). `scope` e `personMemberId` servem só para filtro.
+        Por enquanto só existe `mode=IMMEDIATE` com conta; lançamento previsto e cartão de crédito vêm depois.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTransactionRequest" }
+      responses:
+        "201":
+          description: Lançamento criado (ou repetido com a mesma Idempotency-Key)
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/transactions/{transactionId}:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/TransactionId"
+    get:
+      tags: [transactions]
+      operationId: getTransaction
+      summary: Lançamento
+      responses:
+        "200":
+          description: Lançamento
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
 security:
   - sessionCookie: []
 
@@ -557,6 +609,12 @@ components:
         Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
         Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
       schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[!-~]+$" }
+
+    TransactionId:
+      name: transactionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
 
     AccountId:
       name: accountId
@@ -973,3 +1031,63 @@ components:
           type: string
           maxLength: 200
           description: Padrão "Transferência"
+
+    TransactionKind:
+      type: string
+      enum: [EXPENSE, INCOME]
+
+    Scope:
+      type: string
+      enum: [PERSONAL, FAMILY]
+      description: Classificação para filtro; nunca divide o valor entre membros.
+
+    AccountPaymentMethod:
+      type: string
+      enum: [PIX, DEBIT, CASH, BANK_TRANSFER, BOLETO, OTHER]
+
+    Transaction:
+      type: object
+      additionalProperties: false
+      required: [id, kind, scope, personMemberId, createdByMemberId, description, merchant, notes, amountCents, categoryId, occurredOn, paymentMethod, accountId, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/TransactionKind" }
+        scope: { $ref: "#/components/schemas/Scope" }
+        personMemberId: { type: [string, "null"], format: uuid }
+        createdByMemberId: { type: string, format: uuid }
+        description: { type: string }
+        merchant: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        categoryId: { type: string, format: uuid }
+        occurredOn: { $ref: "#/components/schemas/Date" }
+        paymentMethod: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        accountId: { type: string, format: uuid }
+        status: { type: string, enum: [ACTIVE, VOIDED] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    TransactionPayment:
+      type: object
+      additionalProperties: false
+      required: [method, accountId, mode]
+      properties:
+        method: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        accountId: { type: string, format: uuid, description: Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro }
+        mode: { type: string, enum: [IMMEDIATE] }
+
+    CreateTransactionRequest:
+      type: object
+      additionalProperties: false
+      required: [kind, scope, description, amountCents, categoryId, occurredOn, payment]
+      properties:
+        kind: { $ref: "#/components/schemas/TransactionKind" }
+        scope: { $ref: "#/components/schemas/Scope" }
+        personMemberId: { type: string, format: uuid, description: Membro ativo; obrigatório se PERSONAL }
+        description: { type: string, minLength: 1, maxLength: 200 }
+        merchant: { type: string, maxLength: 120 }
+        notes: { type: string, maxLength: 1000 }
+        amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        categoryId: { type: string, format: uuid, description: Categoria ativa do mesmo tipo (despesa/receita) }
+        occurredOn: { $ref: "#/components/schemas/Date" }
+        payment: { $ref: "#/components/schemas/TransactionPayment" }

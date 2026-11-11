@@ -162,6 +162,32 @@ func (q *Queries) ListCategories(ctx context.Context, arg ListCategoriesParams) 
 	return items, nil
 }
 
+const lockCategoryForEntry = `-- name: LockCategoryForEntry :one
+SELECT kind, is_active
+FROM categories
+WHERE household_id = $1 AND id = $2
+FOR SHARE
+`
+
+type LockCategoryForEntryParams struct {
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+type LockCategoryForEntryRow struct {
+	Kind     string
+	IsActive bool
+}
+
+// Category of a new financial entry. FOR SHARE: concurrent entries may use it, but it cannot
+// be archived (UPDATE) until the entry commits.
+func (q *Queries) LockCategoryForEntry(ctx context.Context, arg LockCategoryForEntryParams) (LockCategoryForEntryRow, error) {
+	row := q.db.QueryRow(ctx, lockCategoryForEntry, arg.HouseholdID, arg.ID)
+	var i LockCategoryForEntryRow
+	err := row.Scan(&i.Kind, &i.IsActive)
+	return i, err
+}
+
 const updateCategory = `-- name: UpdateCategory :one
 UPDATE categories
 SET parent_id = $1, name = $2, icon = $3, color = $4,

@@ -131,19 +131,28 @@ func lockActiveAccounts(ctx context.Context, q *store.Queries, householdID, from
 		sides[0], sides[1] = sides[1], sides[0]
 	}
 	for _, sd := range sides {
-		acc, err := q.LockAccount(ctx, store.LockAccountParams{HouseholdID: householdID, ID: sd.id})
-		if errors.Is(err, pgx.ErrNoRows) {
-			// Also covers accounts of other households (ADR 0006): 422 because the ID came in the body.
-			return kernel.NewError(kernel.ErrInvariant, "ACCOUNT_NOT_FOUND", "Conta não encontrada.",
-				kernel.FieldError{Field: sd.field, Reason: "not_found"})
+		if err := lockActiveAccount(ctx, q, householdID, sd.id, sd.field); err != nil {
+			return err
 		}
-		if err != nil {
-			return fmt.Errorf("lock account: %w", err)
-		}
-		if !acc.IsActive {
-			return kernel.NewError(kernel.ErrInvariant, "ACCOUNT_ARCHIVED", "Não é possível movimentar uma conta arquivada.",
-				kernel.FieldError{Field: sd.field, Reason: "archived"})
-		}
+	}
+	return nil
+}
+
+// lockActiveAccount locks one account (FOR UPDATE) and requires it to be active, so it
+// cannot be archived while money moves through it. field names the request field in errors.
+func lockActiveAccount(ctx context.Context, q *store.Queries, householdID, id uuid.UUID, field string) error {
+	acc, err := q.LockAccount(ctx, store.LockAccountParams{HouseholdID: householdID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Also covers accounts of other households (ADR 0006): 422 because the ID came in the body.
+		return kernel.NewError(kernel.ErrInvariant, "ACCOUNT_NOT_FOUND", "Conta não encontrada.",
+			kernel.FieldError{Field: field, Reason: "not_found"})
+	}
+	if err != nil {
+		return fmt.Errorf("lock account: %w", err)
+	}
+	if !acc.IsActive {
+		return kernel.NewError(kernel.ErrInvariant, "ACCOUNT_ARCHIVED", "Não é possível movimentar uma conta arquivada.",
+			kernel.FieldError{Field: field, Reason: "archived"})
 	}
 	return nil
 }

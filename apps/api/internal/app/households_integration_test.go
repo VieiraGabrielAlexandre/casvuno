@@ -157,7 +157,7 @@ func TestDeactivateMemberPreservesHistoryAndKeepsAnOwner(t *testing.T) {
 // householdRoutes lists every route under /households/{householdId} with a request that
 // exercises it. TestEveryHouseholdRouteIsCoveredByIsolationTests keeps it complete.
 // routeIDs are resource IDs used to build household-scoped paths.
-type routeIDs struct{ member, invite, category, account string }
+type routeIDs struct{ member, invite, category, account, transaction string }
 
 func householdRoutes(ids routeIDs) []struct {
 	method, path string
@@ -185,6 +185,8 @@ func householdRoutes(ids routeIDs) []struct {
 		{http.MethodGet, "/accounts/" + ids.account + "/movements", nil},
 		{http.MethodGet, "/transfers", nil},
 		{http.MethodPost, "/transfers", map[string]any{"fromAccountId": ids.account, "toAccountId": ids.account, "amountCents": 1, "postedOn": "2026-11-10"}},
+		{http.MethodPost, "/transactions", expenseBody(ids.category, ids.account, 1)},
+		{http.MethodGet, "/transactions/" + ids.transaction, nil},
 	}
 }
 
@@ -197,13 +199,15 @@ func TestHouseholdIsolation(t *testing.T) {
 	invA := ownerA.createInvite(a.ID)
 	catA := ownerA.firstCategory(a.ID, "EXPENSE")
 	accA := ownerA.createAccount(a.ID, map[string]any{"name": "Conta A", "ownership": "JOINT", "openingBalanceCents": 1000})
+	txA := ownerA.createTransaction(a.ID, expenseBody(catA.ID, accA.ID, 500))
 
 	ownerB, _ := api.registerUser("ownerB")
 	b := ownerB.createHousehold("Casa B")
 	accB := ownerB.createAccount(b.ID, map[string]any{"name": "Conta B"})
+	catB := ownerB.firstCategory(b.ID, "EXPENSE")
 
 	before := countRows(t, api)
-	for _, rt := range householdRoutes(routeIDs{member: a.MemberID, invite: invA.ID, category: catA.ID, account: accA.ID}) {
+	for _, rt := range householdRoutes(routeIDs{member: a.MemberID, invite: invA.ID, category: catA.ID, account: accA.ID, transaction: txA.ID}) {
 		path := strings.TrimSuffix("/api/v1/households/"+a.ID+rt.path, "/")
 		r := ownerB.expect(http.StatusNotFound, rt.method, path, rt.body)
 		if r.errorCode(t) != "HOUSEHOLD_NOT_FOUND" {
@@ -226,6 +230,24 @@ func TestHouseholdIsolation(t *testing.T) {
 		if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/transfers", body,
 			"Idempotency-Key", uuid.NewString()).errorCode(t); code != "ACCOUNT_NOT_FOUND" {
 			t.Fatalf("got %s", code)
+		}
+	}
+	// A's transaction read through B, and A's category, account or member used in an entry in B:
+	// rejected as if they did not exist (T15, RN-021).
+	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/transactions/"+txA.ID, nil)
+	personal := expenseBody(catB.ID, accB.ID, 100)
+	personal["scope"], personal["personMemberId"] = "PERSONAL", a.MemberID
+	for _, tc := range []struct {
+		body map[string]any
+		code string
+	}{
+		{expenseBody(catA.ID, accB.ID, 100), "CATEGORY_NOT_FOUND"},
+		{expenseBody(catB.ID, accA.ID, 100), "ACCOUNT_NOT_FOUND"},
+		{personal, "PERSON_NOT_MEMBER"},
+	} {
+		if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/transactions", tc.body,
+			"Idempotency-Key", uuid.NewString()).errorCode(t); code != tc.code {
+			t.Fatalf("got %s, want %s", code, tc.code)
 		}
 	}
 	// A's member as owner of an account in B: rejected as if it did not exist (field ownerMemberId).
@@ -260,7 +282,7 @@ func TestHouseholdIsolation(t *testing.T) {
 func TestEveryHouseholdRouteIsCoveredByIsolationTests(t *testing.T) {
 	api := newTestAPI(t)
 	covered := map[string]bool{}
-	for _, rt := range householdRoutes(routeIDs{"{memberId}", "{inviteId}", "{categoryId}", "{accountId}"}) {
+	for _, rt := range householdRoutes(routeIDs{"{memberId}", "{inviteId}", "{categoryId}", "{accountId}", "{transactionId}"}) {
 		covered[rt.method+" /api/v1/households/{householdId}"+rt.path] = true
 	}
 
@@ -322,7 +344,7 @@ func TestAuditTrail(t *testing.T) {
 func countRows(t *testing.T, api *testAPI) map[string]int64 {
 	t.Helper()
 	out := map[string]int64{}
-	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers"} {
+	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers", "transactions", "obligations", "obligation_payments"} {
 		var n int64
 		if err := api.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 			t.Fatal(err)

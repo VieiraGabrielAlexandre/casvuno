@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
@@ -18,6 +19,7 @@ import (
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/categories"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/households"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/identity"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/ledger"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/audit"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/clock"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/config"
@@ -44,6 +46,7 @@ var Module = fx.Options(
 	householdsModule,
 	categoriesModule,
 	accountsModule,
+	ledgerModule,
 	fx.Invoke(func(*http.Server) {}), // the server is the root of the object graph
 )
 
@@ -55,6 +58,32 @@ var accountsModule = fx.Module("accounts",
 		func(s *households.Service) accounts.MemberChecker { return s },
 	),
 )
+
+var ledgerModule = fx.Module("ledger",
+	fx.Provide(
+		ledger.NewService,
+		ledger.NewHandler,
+		// Consumer-defined interfaces of the ledger, implemented by other modules.
+		func(s *categories.Service) ledger.CategoryChecker { return s },
+		func(s *households.Service) ledger.MemberChecker { return s },
+		func(s *accounts.Service) ledger.CashPoster { return ledgerCash{s} },
+	),
+)
+
+// ledgerCash adapts accounts.PostMovement to ledger.CashPoster (direct payments and
+// receipts of obligations), keeping the two modules unaware of each other.
+type ledgerCash struct{ accounts *accounts.Service }
+
+func (c ledgerCash) PostCash(ctx context.Context, householdID uuid.UUID, mv ledger.CashMovement) (uuid.UUID, error) {
+	in := accounts.PostInput{
+		AccountID: mv.AccountID, Direction: accounts.DirectionOut, Kind: accounts.KindDirectPayment,
+		AmountCents: mv.AmountCents, PostedOn: mv.PostedOn, Description: mv.Description, Field: mv.Field,
+	}
+	if mv.Incoming {
+		in.Direction, in.Kind = accounts.DirectionIn, accounts.KindDirectReceipt
+	}
+	return c.accounts.PostMovement(ctx, householdID, in)
+}
 
 var categoriesModule = fx.Module("categories",
 	fx.Provide(

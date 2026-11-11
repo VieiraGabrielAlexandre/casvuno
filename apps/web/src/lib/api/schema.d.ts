@@ -365,6 +365,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/households/{householdId}/transactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lançar despesa ou receita imediata (paga ou recebida agora, numa conta)
+         * @description Grava atomicamente a transação (consumo/receita), a obrigação confirmada, o pagamento e o movimento de caixa
+         *     (saída para despesa, entrada para receita). O valor conta uma vez para a família, quem quer que tenha pago ou
+         *     consumido (sem divisão entre membros). `scope` e `personMemberId` servem só para filtro.
+         *     Por enquanto só existe `mode=IMMEDIATE` com conta; lançamento previsto e cartão de crédito vêm depois.
+         */
+        post: operations["createTransaction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/transactions/{transactionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                transactionId: components["parameters"]["TransactionId"];
+            };
+            cookie?: never;
+        };
+        /** Lançamento */
+        get: operations["getTransaction"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -638,6 +683,71 @@ export interface components {
             /** @description Padrão "Transferência" */
             description?: string;
         };
+        /** @enum {string} */
+        TransactionKind: "EXPENSE" | "INCOME";
+        /**
+         * @description Classificação para filtro; nunca divide o valor entre membros.
+         * @enum {string}
+         */
+        Scope: "PERSONAL" | "FAMILY";
+        /** @enum {string} */
+        AccountPaymentMethod: "PIX" | "DEBIT" | "CASH" | "BANK_TRANSFER" | "BOLETO" | "OTHER";
+        Transaction: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["TransactionKind"];
+            scope: components["schemas"]["Scope"];
+            /** Format: uuid */
+            personMemberId: string | null;
+            /** Format: uuid */
+            createdByMemberId: string;
+            description: string;
+            merchant: string | null;
+            notes: string | null;
+            amountCents: number;
+            /** Format: uuid */
+            categoryId: string;
+            occurredOn: components["schemas"]["Date"];
+            paymentMethod: components["schemas"]["AccountPaymentMethod"];
+            /** Format: uuid */
+            accountId: string;
+            /** @enum {string} */
+            status: "ACTIVE" | "VOIDED";
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TransactionPayment: {
+            method: components["schemas"]["AccountPaymentMethod"];
+            /**
+             * Format: uuid
+             * @description Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro
+             */
+            accountId: string;
+            /** @enum {string} */
+            mode: "IMMEDIATE";
+        };
+        CreateTransactionRequest: {
+            kind: components["schemas"]["TransactionKind"];
+            scope: components["schemas"]["Scope"];
+            /**
+             * Format: uuid
+             * @description Membro ativo; obrigatório se PERSONAL
+             */
+            personMemberId?: string;
+            description: string;
+            merchant?: string;
+            notes?: string;
+            amountCents: number;
+            /**
+             * Format: uuid
+             * @description Categoria ativa do mesmo tipo (despesa/receita)
+             */
+            categoryId: string;
+            occurredOn: components["schemas"]["Date"];
+            payment: components["schemas"]["TransactionPayment"];
+        };
     };
     responses: {
         /** @description Erro no envelope padrão */
@@ -658,6 +768,7 @@ export interface components {
          *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
          */
         IdempotencyKey: string;
+        TransactionId: string;
         AccountId: string;
         /** @description Itens por página (padrão 25). */
         Limit: number;
@@ -1400,6 +1511,72 @@ export interface operations {
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             422: components["responses"]["Error"];
+        };
+    };
+    createTransaction: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+                 *     Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+                 *     Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+                 *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTransactionRequest"];
+            };
+        };
+        responses: {
+            /** @description Lançamento criado (ou repetido com a mesma Idempotency-Key) */
+            201: {
+                headers: {
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getTransaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                transactionId: components["parameters"]["TransactionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lançamento */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
 }
