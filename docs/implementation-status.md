@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F2 — Contas, idempotência e transferências: **F2.1, F2.2 e F2.3 concluídas** (entregas 4 e 5 mescladas no PR #4; entrega 6 ainda não commitada). Próxima: F2.4 (telas).
+**F2 concluída** — contas, idempotência e transferências (entregas 4 e 5 no PR #4, entrega 6 no PR #5; entrega 7, F2.4, ainda não commitada). Próxima: F3.1 (lançamentos imediatos).
 
 ## Concluído
 
@@ -139,11 +139,31 @@ Correções feitas durante a verificação: o golangci-lint precisou ser compila
 | `go mod tidy -diff` / `make gen` ×2 / `make build` | limpo / idempotente / ok |
 | Stack real: `migrate-down`/`migrate-up`, curl, `make check-invariants` | versão 8, dirty = false; transferência 201 e reenvio com a mesma chave 201 + `Idempotent-Replayed: true`; Corrente 150000 / Poupança 150000 / total 300000 (inalterado); nenhuma violação |
 
+### 2026-11-11 — Entrega 7: telas de contas e transferências (F2.4, web)
+- **`lib/money.ts`:** `formatDecimal`/`formatBRL` e `digitsToCents` trabalham sobre os dígitos como texto (sem `/ 100`, sem float); `MAX_ABS_CENTS` = limite da API. `formatDecimal` recusa número não inteiro em vez de arredondar.
+- **`components/money-input.tsx`:** campo preenchido da direita (1, 2, 3, 4 → "12,34" = 1234 centavos), `inputMode="numeric"`, prefixo "R$", acima do limite mantém o valor anterior; `allowNegative` (saldo inicial) aceita "-" mesmo antes dos dígitos. `components/select-field.tsx` (select nativo com label e erro acessível).
+- **`lib/idempotency.ts`:** `IdempotencyKeys` = uma chave por submissão: mesmo payload reaproveita a chave (retentativa após falha de rede vira replay no servidor), payload diferente gera outra (evita o 409), sucesso confirmado zera. UUID v4 com fallback para `getRandomValues` (HTTP sem TLS na rede de casa não tem `randomUUID`).
+- **Offline:** `lib/use-online.ts` (`navigator.onLine` via `useSyncExternalStore`); faixa "Você está sem conexão" no `AppShell`; o formulário de transferência desabilita o envio offline. Falha de rede nunca vira sucesso (`call` já lançava `NETWORK_ERROR`); sem atualização otimista: saldos mudam só depois do 201 (invalidação das queries de contas e transferências).
+- **`lib/dates.ts`:** `formatDate` (`AAAA-MM-DD` → `DD/MM/AAAA` sem `Date`, sem deslocamento de fuso) e `todayIn(timezone)` — a data padrão dos formulários é "hoje" no fuso da família.
+- **Telas:** `/accounts?household=` (caixa consolidado com a etiqueta **caixa**, saldos por conta, arquivadas opcionais, nova conta), `/account?household=&id=` (saldo, editar enviando só os campos alterados, arquivar só com saldo zero — botão desabilitado e explicação —, restaurar, extrato com "Carregar mais" por cursor), `/transfers?household=[&from=]` (formulário com saldos nas opções, mensagem de sucesso só após a confirmação, histórico paginado; menos de 2 contas ativas → estado vazio com link). Links "Contas" e "Transferências" na página da família.
+- **Testes Vitest novos (45):** `money` (formatação, limite, exatidão), `dates` (fuso de São Paulo vs. UTC), `idempotency`, `MoneyInput` (caixa registradora, backspace, limite, negativo, acessibilidade), `TransferForm` (validação sem chamar a API; centavos inteiros + `Idempotency-Key`; **retentativa após falha de rede reusa a chave e a transferência seguinte usa outra**; erro de campo da API; bloqueio offline), `AccountForm` (titular padrão, conjunta sem titular, titular obrigatório, PATCH só com o campo alterado, erro geral).
+- **Sem mudança na API nem no contrato** (a F2.4 consome as rotas da F2.2/F2.3).
+
+## Comandos executados (entrega 7) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `make lint` | golangci-lint 0 issues; ESLint, Prettier e `tsc` ok |
+| `make test` | 8 pacotes Go ok; Vitest 63/63 (10 arquivos) |
+| `pnpm --filter web build` | export estático com as rotas novas `/accounts`, `/account`, `/transfers` |
+| Stack real + `next dev` (script de fumaça via proxy, mesmas chamadas da UI) | páginas 200; cadastro → família → 2 contas (total 300000); transferência 201 e reenvio com a mesma chave 201 + `Idempotent-Replayed: true`; Corrente 150000 / Poupança 150000 / total 300000; extrato com a perna OUT; arquivar com saldo → `ACCOUNT_BALANCE_NOT_ZERO`; PATCH só do nome ok |
+
+Não houve teste interativo em navegador nesta sessão (fica para a F8.5 com Playwright).
+
 ## Próxima tarefa
-F2.4 — web: telas de contas (saldos, consolidado, extrato paginado, criar/editar/arquivar) e de transferência, `lib/money.ts` + `MoneyInput` (dígitos → centavos, sem float), gerador de `Idempotency-Key` por submissão (reutilizado em retentativas) e estado offline.
+F3.1 — migration `transactions`/`obligations`/`obligation_payments` e despesa/receita **imediata** em conta (T01–T03, INV-03/04/05). Antes da F3, convém decidir I-04, I-08, I-15, I-18 e I-19 (`docs/spec-review.md`).
 
 ## Pendências reais
-- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair.
+- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
 - **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
 - **Sem limpeza de sessões, convites e chaves de idempotência expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).

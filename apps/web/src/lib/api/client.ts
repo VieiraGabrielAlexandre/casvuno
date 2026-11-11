@@ -9,6 +9,17 @@ export type Invite = components["schemas"]["Invite"];
 export type CreatedInvite = components["schemas"]["CreatedInvite"];
 export type Category = components["schemas"]["Category"];
 export type CategoryKind = components["schemas"]["CategoryKind"];
+export type Account = components["schemas"]["Account"];
+export type AccountType = components["schemas"]["AccountType"];
+export type Ownership = components["schemas"]["Ownership"];
+export type Movement = components["schemas"]["Movement"];
+export type Transfer = components["schemas"]["Transfer"];
+export type CreateAccountRequest =
+  components["schemas"]["CreateAccountRequest"];
+export type UpdateAccountRequest =
+  components["schemas"]["UpdateAccountRequest"];
+export type CreateTransferRequest =
+  components["schemas"]["CreateTransferRequest"];
 type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 export type FieldError = NonNullable<ErrorEnvelope["error"]["details"]>[number];
 
