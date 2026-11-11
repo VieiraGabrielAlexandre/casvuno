@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useLogout, useMe } from "@/features/auth/hooks";
 import { errorMessage } from "@/lib/api/client";
+import { useOnline } from "@/lib/use-online";
 
 /** Layout for authenticated pages: redirects to /login when there is no session. */
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -14,6 +15,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const logout = useLogout();
   const router = useRouter();
   const pathname = usePathname();
+  const online = useOnline();
 
   useEffect(() => {
     if (me.data === null) {
@@ -51,6 +53,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Button>
         </div>
       </header>
+      {!online && (
+        <p
+          role="status"
+          className="border-b bg-muted px-4 py-2 text-center text-sm"
+        >
+          Você está sem conexão. Nada será salvo até a conexão voltar.
+        </p>
+      )}
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-6">
         {children}
       </main>

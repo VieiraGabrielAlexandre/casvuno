@@ -56,8 +56,8 @@ Casvuno é uma aplicação web/PWA de gestão financeira **familiar**: um monól
 - **Next.js 16.4 tem APIs diferentes das versões antigas:** antes de escrever código web, leia `apps/web/AGENTS.md` e a documentação embutida em `apps/web/node_modules/next/dist/docs/`.
 - `output: 'export'`, dados só no cliente (TanStack Query), cliente tipado gerado de `docs/openapi.yaml` (`make gen`). **Nunca editar código gerado à mão.**
 - `src/app` fino → `src/features/<domínio>` → `src/components/ui` e `src/lib`.
-- Valores: use `lib/money.ts` (dígitos → centavos; formatação `pt-BR`/BRL).
-- Mutações financeiras: `Idempotency-Key` por submissão, botão desabilitado enquanto pendente, nunca sucesso otimista. Offline → mensagem clara.
+- Valores: use `lib/money.ts` (dígitos → centavos; formatação `pt-BR`/BRL) e o componente `MoneyInput` (valor em centavos). Datas de calendário: `lib/dates.ts` (`formatDate`, `todayIn(timezone da família)`), nunca `new Date("AAAA-MM-DD")`.
+- Mutações financeiras: `Idempotency-Key` por submissão com `IdempotencyKeys` (`lib/idempotency.ts`; modelo em `features/transfers/hooks.ts`), botão desabilitado enquanto pendente, nunca sucesso otimista. Offline → mensagem clara (`useOnline`, faixa no `AppShell`) e envio bloqueado.
 - Service worker nunca cacheia `/api/*` nem dados financeiros.
 - UI pt-BR, mobile-first, acessível (labels, teclado, contraste AA). Toda métrica indica se é **consumo**, **compromisso** ou **caixa**.
 
