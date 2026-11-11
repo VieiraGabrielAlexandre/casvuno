@@ -335,7 +335,8 @@ func TestInvariantCheckerDetectsViolations(t *testing.T) {
 		found[v[:6]]++
 	}
 	// INV-05 twice: the mismatched payment and the orphan DIRECT_PAYMENT planted for INV-18.
-	want := map[string]int{"INV-03": 1, "INV-04": 1, "INV-05": 2, "INV-08": 1, "INV-18": 1}
+	// INV-13: the payments were planted on a PLANNED obligation.
+	want := map[string]int{"INV-03": 1, "INV-04": 1, "INV-05": 2, "INV-08": 1, "INV-13": 1, "INV-18": 1}
 	if !maps.Equal(found, want) {
 		t.Fatalf("violations = %v, want %v", violations, want)
 	}

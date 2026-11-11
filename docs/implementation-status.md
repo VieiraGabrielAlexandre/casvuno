@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F3 — Lançamentos: **F3.1 concluída** (entrega 8, API, ainda não commitada). F2 completa (entregas 4–7 nos PRs #4, #5 e #6). Próxima: F3.2 (despesa/receita prevista e pagamento de obrigação).
+F3 — Lançamentos: **F3.1 e F3.2 concluídas** (entregas 8 e 9, API, ainda não commitadas). Próxima: F3.3 (listar/filtrar transações, PATCH não estrutural, void, estorno, cancelar previsão).
 
 ## Concluído
 
@@ -187,11 +187,42 @@ I-04, I-08, I-15 (deslocar compra retroativa para a próxima fatura aberta), I-1
 | `go mod tidy -diff` / `make gen` / `make build` | limpo / idempotente / ok (imagem e export estático) |
 | Stack real: `make up`, `migrate-down`/`migrate-up`, curl, `make check-invariants` | versão 9, dirty = false; down/up ok; café de R$ 12,50 → 201 e reenvio com a mesma chave → 201 com `Idempotent-Replayed: true`; saldo −1250; extrato com um `OUT/DIRECT_PAYMENT`; nenhuma violação |
 
+### 2026-11-11 — Entrega 9: lançamentos previstos e pagamento de obrigações (F3.2, API)
+- **Previsão (`POST /transactions`, `mode=PLANNED`, `payment.dueOn`):**
+  - grava só a obrigação `PLANNED`/`MANUAL_FORECAST` com o rascunho (I-08): sem transação, sem movimento e sem consumo;
+  - a conta é opcional (se informada, precisa estar ativa) e `occurredOn` vira a data de competência;
+  - recusa `merchant`/`notes` (I-44);
+  - a resposta do endpoint passou a ser `{transaction, obligation}` nos dois modos (`transaction = null` na previsão).
+- **Pagamento (`POST /obligations/{id}/payments`, idempotente):**
+  - trava a obrigação, relê o total pago e recusa valor acima do saldo (`AMOUNT_EXCEEDS_OUTSTANDING`) ou obrigação quitada (`OBLIGATION_ALREADY_PAID`)/cancelada;
+  - posta o movimento (saída para pagar, entrada para receber) na conta da obrigação ou no `accountId` informado;
+  - o **primeiro pagamento confirma a previsão**: cria a transação com o valor total e `occurred_on = competência` e a vincula (status `CONFIRMED`), então o consumo aparece uma vez só (T22);
+  - pagamentos parciais permitidos; auditoria `obligation.paid` + `transaction.created`.
+- **Listagem e detalhe:**
+  - `GET /obligations`: por vencimento, paginada por cursor; `view=open|overdue|all`, `kind`, `from`/`to`; `paymentStatus`, `outstandingCents` e `isOverdue` derivados dos pagamentos (I-02);
+  - `GET /obligations/{id}`: obrigação + pagamentos;
+  - `PATCH /obligations/{id}`: valor, vencimento e descrição, só em `PLANNED` (422 `OBLIGATION_NOT_PLANNED`).
+- **Fuso da família:** a membership carrega o `timezone` da família; `kernel.Today(clock, tz)` define "hoje" para `isOverdue` e `view=overdue`.
+- **Invariante INV-13** (previsão sem pagamentos) no `check-invariants.sql`.
+- **Docs:** OpenAPI 0.8.0, plano (F3.2 ✅; cancelar previsão entra na F3.3), `spec-review` (I-44), ADR 0007, `domain-model`, AGENTS.md.
+
+## Comandos executados (entrega 9) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test -race -tags integration ./internal/app/` | ok na 1ª execução. O `golangci-lint` apontou depois que eu tinha enfraquecido o teste de isolamento (o "nada mudou" das requisições entre famílias deixara de ser verificado); corrigido e reexecutado: ok. |
+| Testes novos de integração | **Previsão de despesa:** sem consumo nem caixa até pagar; 1º pagamento parcial confirma com o valor total na data de competência; replay sem novo pagamento; quitação não cria segunda transação; pagar quitada → 422. **T22:** receita prevista sem conta exige `accountId`, depois vira uma receita só. **Listagem:** ordem por vencimento, `isOverdue`, `view` open/overdue/all, `kind`, período, paginação, 6 filtros inválidos → 400, e "vencida" muda com o relógio no fuso de São Paulo. **Regras:** edição de previsão, 4 PATCHs inválidos, 5 pagamentos recusados sem gravar nada, edição bloqueada depois de pago e em lançamento imediato, auditoria. **T17:** 10 pagamentos simultâneos do valor total: 1 aceito, 9 × 422, uma transação. **Isolamento:** 4 rotas novas; obrigação de outra família → 404; conta de outra família no pagamento → 422 sem gravar. **Verificador:** detecta INV-13 |
+| `go test ./internal/ledger/ ./internal/kernel/` | ok (regras de previsão, situação de pagamento derivada, `kernel.Today` com fuso) |
+| `make lint` | 0 issues; ESLint, Prettier e `tsc` ok |
+| `make test` | 9 pacotes Go ok; Vitest 63/63 |
+| `go mod tidy -diff` / `make gen` / `make build` | limpo / idempotente / ok |
+| Stack real: `make up`, curl, `make check-invariants` | condomínio previsto de R$ 650 → `transaction: null`, `PLANNED`, saldo inalterado (100000); pagamento de R$ 200 → 201 e reenvio com `Idempotent-Replayed: true`; R$ 450 → `PAID`, 2 pagamentos; saldo 35000; nenhuma obrigação em aberto; nenhuma violação |
+
 ## Próxima tarefa
-F3.2 — despesa/receita **prevista** (`mode=PLANNED`, `dueOn`): obrigação `PLANNED` com rascunho; `GET /obligations` (pendentes, vencidas, período); `POST /obligations/{id}/payments` (parcial, o primeiro pagamento cria a transação com `occurred_on = competence_on`, lock na obrigação, teto pelo saldo); `PATCH /obligations/{id}` só em `PLANNED` sem pagamentos (T22; INV-13).
+F3.3 — listar/filtrar transações (período, categoria, conta, pessoa, escopo, meio, texto) com keyset; `PATCH` não estrutural (I-18); void de lançamento fora do cartão com **estorno de movimento** (`REVERSAL`, INV-18/19); cancelar previsão.
 
 ## Pendências reais
-- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). A F3.1 não tem tela (o lançamento rápido é a F3.5). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
+- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). F3.1 e F3.2 não têm tela (lançamento rápido e pendências são a F3.5).
+- **Previsão errada não pode ser cancelada ainda:** só editada (valor, vencimento, descrição). O cancelamento entra na F3.3. Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
 - **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
 - **Sem limpeza de sessões, convites e chaves de idempotência expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).

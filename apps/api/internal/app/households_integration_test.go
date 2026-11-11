@@ -157,7 +157,7 @@ func TestDeactivateMemberPreservesHistoryAndKeepsAnOwner(t *testing.T) {
 // householdRoutes lists every route under /households/{householdId} with a request that
 // exercises it. TestEveryHouseholdRouteIsCoveredByIsolationTests keeps it complete.
 // routeIDs are resource IDs used to build household-scoped paths.
-type routeIDs struct{ member, invite, category, account, transaction string }
+type routeIDs struct{ member, invite, category, account, transaction, obligation string }
 
 func householdRoutes(ids routeIDs) []struct {
 	method, path string
@@ -187,6 +187,10 @@ func householdRoutes(ids routeIDs) []struct {
 		{http.MethodPost, "/transfers", map[string]any{"fromAccountId": ids.account, "toAccountId": ids.account, "amountCents": 1, "postedOn": "2026-11-10"}},
 		{http.MethodPost, "/transactions", expenseBody(ids.category, ids.account, 1)},
 		{http.MethodGet, "/transactions/" + ids.transaction, nil},
+		{http.MethodGet, "/obligations", nil},
+		{http.MethodGet, "/obligations/" + ids.obligation, nil},
+		{http.MethodPatch, "/obligations/" + ids.obligation, map[string]any{"amountCents": 1}},
+		{http.MethodPost, "/obligations/" + ids.obligation + "/payments", map[string]any{"amountCents": 1, "paidOn": "2026-11-10"}},
 	}
 }
 
@@ -200,6 +204,7 @@ func TestHouseholdIsolation(t *testing.T) {
 	catA := ownerA.firstCategory(a.ID, "EXPENSE")
 	accA := ownerA.createAccount(a.ID, map[string]any{"name": "Conta A", "ownership": "JOINT", "openingBalanceCents": 1000})
 	txA := ownerA.createTransaction(a.ID, expenseBody(catA.ID, accA.ID, 500))
+	forecastA := ownerA.createForecast(a.ID, forecastBody("EXPENSE", catA.ID, &accA.ID, 700, "2026-11-10", "2026-11-20"))
 
 	ownerB, _ := api.registerUser("ownerB")
 	b := ownerB.createHousehold("Casa B")
@@ -207,7 +212,7 @@ func TestHouseholdIsolation(t *testing.T) {
 	catB := ownerB.firstCategory(b.ID, "EXPENSE")
 
 	before := countRows(t, api)
-	for _, rt := range householdRoutes(routeIDs{member: a.MemberID, invite: invA.ID, category: catA.ID, account: accA.ID, transaction: txA.ID}) {
+	for _, rt := range householdRoutes(routeIDs{member: a.MemberID, invite: invA.ID, category: catA.ID, account: accA.ID, transaction: txA.ID, obligation: forecastA.ID}) {
 		path := strings.TrimSuffix("/api/v1/households/"+a.ID+rt.path, "/")
 		r := ownerB.expect(http.StatusNotFound, rt.method, path, rt.body)
 		if r.errorCode(t) != "HOUSEHOLD_NOT_FOUND" {
@@ -250,6 +255,25 @@ func TestHouseholdIsolation(t *testing.T) {
 			t.Fatalf("got %s, want %s", code, tc.code)
 		}
 	}
+	// A's obligation addressed through B, and B's forecast paid from A's account.
+	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/obligations/"+forecastA.ID, nil)
+	ownerB.expect(http.StatusNotFound, http.MethodPatch, "/api/v1/households/"+b.ID+"/obligations/"+forecastA.ID, map[string]any{"amountCents": 1})
+	ownerB.expect(http.StatusNotFound, http.MethodPost, "/api/v1/households/"+b.ID+"/obligations/"+forecastA.ID+"/payments",
+		map[string]any{"amountCents": 1, "paidOn": "2026-11-10"}, "Idempotency-Key", uuid.NewString())
+	if after := countRows(t, api); !maps.Equal(before, after) {
+		t.Fatalf("cross-household requests changed data: before %v after %v", before, after)
+	}
+	forecastB := ownerB.createForecast(b.ID, forecastBody("EXPENSE", catB.ID, nil, 300, "2026-11-10", "2026-11-20"))
+	before = countRows(t, api) // B's own forecast is a legitimate write
+	if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/obligations/"+forecastB.ID+"/payments",
+		map[string]any{"amountCents": 300, "paidOn": "2026-11-10", "accountId": accA.ID}, "Idempotency-Key", uuid.NewString()).errorCode(t); code != "ACCOUNT_NOT_FOUND" {
+		t.Fatalf("got %s", code)
+	}
+	var listB struct{ Items []obligationDTO }
+	ownerB.expect(http.StatusOK, http.MethodGet, "/api/v1/households/"+b.ID+"/obligations?view=all", nil).decode(t, &listB)
+	if len(listB.Items) != 1 || listB.Items[0].ID != forecastB.ID {
+		t.Fatalf("B lists %+v", listB.Items)
+	}
 	// A's member as owner of an account in B: rejected as if it did not exist (field ownerMemberId).
 	if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/accounts",
 		map[string]any{"name": "X", "type": "CHECKING", "ownership": "INDIVIDUAL", "ownerMemberId": a.MemberID,
@@ -282,7 +306,7 @@ func TestHouseholdIsolation(t *testing.T) {
 func TestEveryHouseholdRouteIsCoveredByIsolationTests(t *testing.T) {
 	api := newTestAPI(t)
 	covered := map[string]bool{}
-	for _, rt := range householdRoutes(routeIDs{"{memberId}", "{inviteId}", "{categoryId}", "{accountId}", "{transactionId}"}) {
+	for _, rt := range householdRoutes(routeIDs{"{memberId}", "{inviteId}", "{categoryId}", "{accountId}", "{transactionId}", "{obligationId}"}) {
 		covered[rt.method+" /api/v1/households/{householdId}"+rt.path] = true
 	}
 

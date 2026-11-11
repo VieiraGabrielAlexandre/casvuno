@@ -123,13 +123,13 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 
 ### F3 — Lançamentos (ledger)
 
-**Entrega 8 (2026-11-11):** F3.1 concluída (API). Decisões I-04, I-08, I-15, I-18 e I-19 aprovadas no mesmo dia (ADRs 0002, 0003 e 0010 aceitos).
+**Entrega 8 (2026-11-11):** F3.1 concluída (API). **Entrega 9:** F3.2 concluída (API). Decisões I-04, I-08, I-15, I-18 e I-19 aprovadas no mesmo dia (ADRs 0002, 0003 e 0010 aceitos).
 
 | ID | Tarefa | Dep. | Aceite | Verificar |
 |---|---|---|---|---|
 | F3.1 | Migration `transactions`/`obligations`/`obligation_payments`; criar despesa/receita **imediata** (conta) | F2.3 | T01, T02, T03; categoria de `kind` errado → 422; INV-03/04/05 | `make test` | ✅ (entrega 8; `GET /transactions/{id}` adiantado da F3.3; telas na F3.5) |
-| F3.2 | Despesa/receita **prevista**; `GET /obligations` (pendentes, vencidas, período); `POST /obligations/:id/payments` (parcial, confirma na 1ª, lock); `PATCH /obligations/:id` (PLANNED) | F3.1 | T22; consumo só aparece depois da confirmação; pagamentos concorrentes nunca excedem o valor | `make test` |
-| F3.3 | Listar/filtrar transações (período, categoria, conta, pessoa, escopo, meio, texto) com keyset; detalhe; `PATCH` não estrutural; void de não-cartão; **estorno de movimento** (`accounts`, vindo da F2.3: movimento `REVERSAL` espelhado, INV-18) usado pelo void | F3.2 | RN-025; INV-19; void idempotente | `make test` |
+| F3.2 | Despesa/receita **prevista**; `GET /obligations` (pendentes, vencidas, período); `POST /obligations/:id/payments` (parcial, confirma na 1ª, lock); `PATCH /obligations/:id` (PLANNED) | F3.1 | T22; consumo só aparece depois da confirmação; pagamentos concorrentes nunca excedem o valor | `make test` | ✅ (entrega 9; + `GET /obligations/{id}` com pagamentos) |
+| F3.3 | Listar/filtrar transações (período, categoria, conta, pessoa, escopo, meio, texto) com keyset; detalhe; `PATCH` não estrutural; void de não-cartão; **cancelar previsão** (obrigação `PLANNED` → `CANCELLED`, auditado; vinda da F3.2); **estorno de movimento** (`accounts`, vindo da F2.3: movimento `REVERSAL` espelhado, INV-18) usado pelo void | F3.2 | RN-025; INV-19; void idempotente | `make test` |
 | F3.4 | Migration `quick_templates`; CRUD de favoritos; "repetir último" (`GET transactions?createdBy=me&limit=1`) | F3.1 | Favorito de outra família/usuário inacessível | `make test` |
 | F3.5 | Web: lançamento rápido (FAB `+`, valor em destaque, hoje por padrão, imediato/previsto), favoritos, lista de transações com filtros, pendências com pagamento, "Corrigir" (void + novo) | F3.4 | E2E: favorito completo confirmado em ≤ 3 interações; offline sem falso sucesso (T19 parcial) | `make e2e` |
 

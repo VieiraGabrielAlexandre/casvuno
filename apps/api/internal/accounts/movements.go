@@ -81,3 +81,12 @@ func (s *Service) PostMovement(ctx context.Context, householdID uuid.UUID, in Po
 	}
 	return id, nil
 }
+
+// RequireActive locks an account of the household (until the caller's transaction ends) and
+// requires it to be active, without moving money: e.g. a forecast that names the account it
+// will be paid from. field names the request field in errors.
+func (s *Service) RequireActive(ctx context.Context, householdID, accountID uuid.UUID, field string) error {
+	return s.tx.WithinTx(ctx, func(ctx context.Context) error {
+		return lockActiveAccount(ctx, store.New(s.tx.Conn(ctx)), householdID, accountID, field)
+	})
+}

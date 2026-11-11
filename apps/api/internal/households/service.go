@@ -173,7 +173,9 @@ func (s *Service) Membership(ctx context.Context, householdID, userID uuid.UUID)
 	if err != nil {
 		return authctx.Membership{}, fmt.Errorf("get membership: %w", err)
 	}
-	return authctx.Membership{HouseholdID: householdID, MemberID: row.ID, UserID: userID, Role: authctx.Role(row.Role)}, nil
+	return authctx.Membership{
+		HouseholdID: householdID, MemberID: row.ID, UserID: userID, Role: authctx.Role(row.Role), Timezone: row.Timezone,
+	}, nil
 }
 
 // Get returns the household of membership m.

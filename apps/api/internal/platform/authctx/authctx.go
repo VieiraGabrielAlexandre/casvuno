@@ -32,6 +32,8 @@ type Membership struct {
 	MemberID    uuid.UUID
 	UserID      uuid.UUID
 	Role        Role
+	// Timezone is the household's IANA zone: "today" is always the household's date (RN-005).
+	Timezone string
 }
 
 type userKey struct{}

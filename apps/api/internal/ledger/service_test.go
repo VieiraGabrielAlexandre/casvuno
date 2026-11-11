@@ -22,6 +22,11 @@ func validInput() CreateInput {
 
 func ptr(s string) *string { return &s }
 
+func planned(in *CreateInput) {
+	due := in.OccurredOn.AddDate(0, 0, 10)
+	in.Payment.Mode, in.Payment.DueOn = ModePlanned, &due
+}
+
 func TestNormalizeTrimsTexts(t *testing.T) {
 	in := validInput()
 	in.Description, in.Merchant, in.Notes = "  Mercado  ", ptr(" Feira "), ptr("   ")
@@ -51,7 +56,11 @@ func TestNormalizeRejects(t *testing.T) {
 		{"201-character description", func(in *CreateInput) { in.Description = strings.Repeat("ç", 201) }, "description"},
 		{"long merchant", func(in *CreateInput) { in.Merchant = ptr(strings.Repeat("a", 121)) }, "merchant"},
 		{"long notes", func(in *CreateInput) { in.Notes = ptr(strings.Repeat("a", 1001)) }, "notes"},
-		{"planned mode (F3.2)", func(in *CreateInput) { in.Payment.Mode = "PLANNED" }, "payment.mode"},
+		{"unknown mode", func(in *CreateInput) { in.Payment.Mode = "LATER" }, "payment.mode"},
+		{"immediate with due date", func(in *CreateInput) { d := in.OccurredOn; in.Payment.DueOn = &d }, "payment.dueOn"},
+		{"planned without due date", func(in *CreateInput) { in.Payment.Mode = ModePlanned }, "payment.dueOn"},
+		{"planned with merchant", func(in *CreateInput) { planned(in); in.Merchant = ptr("Feira") }, "merchant"},
+		{"planned with notes", func(in *CreateInput) { planned(in); in.Notes = ptr("x") }, "notes"},
 		{"credit card (F4.3)", func(in *CreateInput) { in.Payment.Method = "CREDIT_CARD" }, "payment.method"},
 		{"missing account", func(in *CreateInput) { in.Payment.AccountID = nil }, "payment.accountId"},
 	} {
@@ -78,8 +87,44 @@ func TestNormalizeRejects(t *testing.T) {
 	}
 }
 
+func TestNormalizeAcceptsAForecastWithoutAccount(t *testing.T) {
+	in := validInput()
+	planned(&in)
+	in.Payment.AccountID = nil
+	if _, err := normalize(in); err != nil {
+		t.Fatalf("forecast without account rejected: %v", err)
+	}
+}
+
+func TestDerivedPaymentSituation(t *testing.T) {
+	today := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	o := Obligation{Status: StatusPlanned, AmountCents: 1000, DueOn: today.AddDate(0, 0, -1)}
+	if o.PaymentStatus() != PaymentUnpaid || o.OutstandingCents() != 1000 || !o.IsOverdue(today) {
+		t.Fatalf("unpaid: %s %d %v", o.PaymentStatus(), o.OutstandingCents(), o.IsOverdue(today))
+	}
+	o.Status, o.PaidCents = StatusConfirmed, 400
+	if o.PaymentStatus() != PaymentPartiallyPaid || o.OutstandingCents() != 600 || !o.IsOverdue(today) {
+		t.Fatal("partially paid and still overdue")
+	}
+	o.PaidCents = 1000
+	if o.PaymentStatus() != PaymentPaid || o.OutstandingCents() != 0 || o.IsOverdue(today) {
+		t.Fatal("paid is never overdue")
+	}
+	due := Obligation{Status: StatusPlanned, AmountCents: 1000, DueOn: today}
+	if due.IsOverdue(today) {
+		t.Fatal("due today is not overdue yet")
+	}
+	cancelled := Obligation{Status: StatusCancelled, AmountCents: 1000, DueOn: today.AddDate(0, -1, 0)}
+	if cancelled.OutstandingCents() != 0 || cancelled.IsOverdue(today) {
+		t.Fatal("cancelled is neither outstanding nor overdue")
+	}
+}
+
 func TestObligationKindMirrorsTheEntry(t *testing.T) {
 	if obligationKind(KindExpense) != "PAYABLE" || obligationKind(KindIncome) != "RECEIVABLE" {
 		t.Fatal("expense must be payable and income receivable")
+	}
+	if transactionKind("PAYABLE") != KindExpense || transactionKind("RECEIVABLE") != KindIncome {
+		t.Fatal("a confirmed forecast keeps its kind")
 	}
 }

@@ -24,7 +24,7 @@ Grafo de dependência (acíclico): `accounts ← cards ← ledger ← recurrence
 ## 2. Tipos de kernel
 
 - `money.Cents` (`int64`). Positivo no domínio; o sinal aparece só na direção do movimento, nos ajustes de fatura e no saldo inicial. Nunca `float`.
-- `civil.Date` (data de calendário sem hora, `DATE`). Instantes em `time.Time` UTC (`TIMESTAMPTZ`). "Hoje" é sempre calculado no fuso da família via `Clock`.
+- `civil.Date` (data de calendário sem hora, `DATE`). Instantes em `time.Time` UTC (`TIMESTAMPTZ`). "Hoje" é sempre calculado no fuso da família via `Clock`: `kernel.Today(clock.Now(), membership.Timezone)` (o fuso vem na membership desde a F3.2).
 - IDs: UUID v7 gerado na aplicação.
 - Erros: `ErrValidation`, `ErrNotFound`, `ErrConflict`, `ErrForbidden`, `ErrInvariant` (→ 400/422, 404, 409, 403, 422).
 

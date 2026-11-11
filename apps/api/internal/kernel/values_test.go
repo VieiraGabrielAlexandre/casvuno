@@ -23,3 +23,17 @@ func TestMaxAbsCentsIsExactInJSONNumbers(t *testing.T) {
 		t.Fatal("MaxAbsCents must stay below 2^53")
 	}
 }
+
+func TestTodayUsesTheHouseholdTimezone(t *testing.T) {
+	// 02:30 UTC on Nov 11 is still Nov 10 in São Paulo (UTC−3).
+	now := time.Date(2026, 11, 11, 2, 30, 0, 0, time.UTC)
+	if got := FormatDate(Today(now, "America/Sao_Paulo")); got != "2026-11-10" {
+		t.Fatalf("São Paulo: %s", got)
+	}
+	if got := FormatDate(Today(now, "UTC")); got != "2026-11-11" {
+		t.Fatalf("UTC: %s", got)
+	}
+	if got := Today(now, "Not/AZone"); got.Location() != time.UTC || FormatDate(got) != "2026-11-11" {
+		t.Fatalf("invalid zone must fall back to UTC: %v", got)
+	}
+}

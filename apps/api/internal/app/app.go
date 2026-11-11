@@ -66,12 +66,12 @@ var ledgerModule = fx.Module("ledger",
 		// Consumer-defined interfaces of the ledger, implemented by other modules.
 		func(s *categories.Service) ledger.CategoryChecker { return s },
 		func(s *households.Service) ledger.MemberChecker { return s },
-		func(s *accounts.Service) ledger.CashPoster { return ledgerCash{s} },
+		func(s *accounts.Service) ledger.Cash { return ledgerCash{s} },
 	),
 )
 
-// ledgerCash adapts accounts.PostMovement to ledger.CashPoster (direct payments and
-// receipts of obligations), keeping the two modules unaware of each other.
+// ledgerCash adapts the accounts module to ledger.Cash (direct payments and receipts of
+// obligations), keeping the two modules unaware of each other.
 type ledgerCash struct{ accounts *accounts.Service }
 
 func (c ledgerCash) PostCash(ctx context.Context, householdID uuid.UUID, mv ledger.CashMovement) (uuid.UUID, error) {
@@ -83,6 +83,10 @@ func (c ledgerCash) PostCash(ctx context.Context, householdID uuid.UUID, mv ledg
 		in.Direction, in.Kind = accounts.DirectionIn, accounts.KindDirectReceipt
 	}
 	return c.accounts.PostMovement(ctx, householdID, in)
+}
+
+func (c ledgerCash) RequireActiveAccount(ctx context.Context, householdID, accountID uuid.UUID, field string) error {
+	return c.accounts.RequireActive(ctx, householdID, accountID, field)
 }
 
 var categoriesModule = fx.Module("categories",
