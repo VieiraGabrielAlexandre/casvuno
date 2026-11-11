@@ -66,4 +66,12 @@ UNION ALL
 SELECT 'INV-05', m.id::text, 'direct movement without an obligation payment'
 FROM account_movements m
 WHERE m.kind IN ('DIRECT_PAYMENT', 'DIRECT_RECEIPT')
-  AND NOT EXISTS (SELECT 1 FROM obligation_payments p WHERE p.household_id = m.household_id AND p.account_movement_id = m.id);
+  AND NOT EXISTS (SELECT 1 FROM obligation_payments p WHERE p.household_id = m.household_id AND p.account_movement_id = m.id)
+
+UNION ALL
+
+-- INV-13: a forecast (PLANNED) has no transaction and no payments: its first payment confirms it.
+SELECT 'INV-13', o.id::text, 'planned obligation with payments'
+FROM obligations o
+WHERE o.status = 'PLANNED'
+  AND EXISTS (SELECT 1 FROM obligation_payments p WHERE p.household_id = o.household_id AND p.obligation_id = o.id);

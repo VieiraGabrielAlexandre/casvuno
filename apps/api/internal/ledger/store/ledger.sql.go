@@ -12,6 +12,24 @@ import (
 	"github.com/google/uuid"
 )
 
+const confirmObligation = `-- name: ConfirmObligation :exec
+UPDATE obligations
+SET status = 'CONFIRMED', transaction_id = $1, updated_at = now()
+WHERE household_id = $2 AND id = $3 AND status = 'PLANNED'
+`
+
+type ConfirmObligationParams struct {
+	TransactionID *uuid.UUID
+	HouseholdID   uuid.UUID
+	ID            uuid.UUID
+}
+
+// The first payment of a forecast confirms it (I-08).
+func (q *Queries) ConfirmObligation(ctx context.Context, arg ConfirmObligationParams) error {
+	_, err := q.db.Exec(ctx, confirmObligation, arg.TransactionID, arg.HouseholdID, arg.ID)
+	return err
+}
+
 const createObligation = `-- name: CreateObligation :exec
 INSERT INTO obligations (id, household_id, transaction_id, kind, source, status, amount_cents, due_on, description,
                          category_id, scope, person_member_id, payment_method, account_id, competence_on,
@@ -135,6 +153,69 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 	return err
 }
 
+const getObligation = `-- name: GetObligation :one
+SELECT o.id, o.transaction_id, o.kind, o.source, o.status, o.amount_cents, o.due_on, o.description, o.category_id,
+       o.scope, o.person_member_id, o.payment_method, o.account_id, o.competence_on, o.created_by_member_id,
+       o.created_at, o.updated_at,
+       COALESCE((SELECT sum(p.amount_cents) FROM obligation_payments p
+                 WHERE p.household_id = o.household_id AND p.obligation_id = o.id), 0)::bigint AS paid_cents
+FROM obligations o
+WHERE o.household_id = $1 AND o.id = $2
+`
+
+type GetObligationParams struct {
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+type GetObligationRow struct {
+	ID                uuid.UUID
+	TransactionID     *uuid.UUID
+	Kind              string
+	Source            string
+	Status            string
+	AmountCents       int64
+	DueOn             time.Time
+	Description       string
+	CategoryID        uuid.UUID
+	Scope             string
+	PersonMemberID    *uuid.UUID
+	PaymentMethod     string
+	AccountID         *uuid.UUID
+	CompetenceOn      time.Time
+	CreatedByMemberID uuid.UUID
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	PaidCents         int64
+}
+
+// Paid amounts are always summed from obligation_payments (I-02): no cached column.
+func (q *Queries) GetObligation(ctx context.Context, arg GetObligationParams) (GetObligationRow, error) {
+	row := q.db.QueryRow(ctx, getObligation, arg.HouseholdID, arg.ID)
+	var i GetObligationRow
+	err := row.Scan(
+		&i.ID,
+		&i.TransactionID,
+		&i.Kind,
+		&i.Source,
+		&i.Status,
+		&i.AmountCents,
+		&i.DueOn,
+		&i.Description,
+		&i.CategoryID,
+		&i.Scope,
+		&i.PersonMemberID,
+		&i.PaymentMethod,
+		&i.AccountID,
+		&i.CompetenceOn,
+		&i.CreatedByMemberID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PaidCents,
+	)
+	return i, err
+}
+
 const getTransaction = `-- name: GetTransaction :one
 SELECT id, kind, scope, person_member_id, created_by_member_id, description, merchant, notes, amount_cents,
        category_id, occurred_on, payment_method, account_id, status, created_at, updated_at
@@ -188,4 +269,203 @@ func (q *Queries) GetTransaction(ctx context.Context, arg GetTransactionParams) 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listObligationPayments = `-- name: ListObligationPayments :many
+SELECT p.id, p.amount_cents, p.paid_on, m.account_id, p.account_movement_id, p.created_by_member_id, p.created_at
+FROM obligation_payments p
+JOIN account_movements m ON m.household_id = p.household_id AND m.id = p.account_movement_id
+WHERE p.household_id = $1 AND p.obligation_id = $2
+ORDER BY p.paid_on, p.id
+`
+
+type ListObligationPaymentsParams struct {
+	HouseholdID  uuid.UUID
+	ObligationID uuid.UUID
+}
+
+type ListObligationPaymentsRow struct {
+	ID                uuid.UUID
+	AmountCents       int64
+	PaidOn            time.Time
+	AccountID         uuid.UUID
+	AccountMovementID uuid.UUID
+	CreatedByMemberID uuid.UUID
+	CreatedAt         time.Time
+}
+
+func (q *Queries) ListObligationPayments(ctx context.Context, arg ListObligationPaymentsParams) ([]ListObligationPaymentsRow, error) {
+	rows, err := q.db.Query(ctx, listObligationPayments, arg.HouseholdID, arg.ObligationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListObligationPaymentsRow
+	for rows.Next() {
+		var i ListObligationPaymentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AmountCents,
+			&i.PaidOn,
+			&i.AccountID,
+			&i.AccountMovementID,
+			&i.CreatedByMemberID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listObligations = `-- name: ListObligations :many
+SELECT o.id, o.transaction_id, o.kind, o.source, o.status, o.amount_cents, o.due_on, o.description, o.category_id,
+       o.scope, o.person_member_id, o.payment_method, o.account_id, o.competence_on, o.created_by_member_id,
+       o.created_at, o.updated_at, paid.cents AS paid_cents
+FROM obligations o
+CROSS JOIN LATERAL (
+    SELECT COALESCE(sum(p.amount_cents), 0)::bigint AS cents
+    FROM obligation_payments p
+    WHERE p.household_id = o.household_id AND p.obligation_id = o.id
+) paid
+WHERE o.household_id = $1
+  AND ($2::text IS NULL OR o.kind = $2::text)
+  AND ($3::date IS NULL OR o.due_on >= $3::date)
+  AND ($4::date IS NULL OR o.due_on <= $4::date)
+  AND (NOT $5::boolean OR (o.status <> 'CANCELLED' AND paid.cents < o.amount_cents))
+  AND ($6::date IS NULL OR o.due_on < $6::date)
+  AND ($7::date IS NULL
+       OR (o.due_on, o.id) > ($7::date, $8::uuid))
+ORDER BY o.due_on, o.id
+LIMIT $9
+`
+
+type ListObligationsParams struct {
+	HouseholdID   uuid.UUID
+	Kind          *string
+	FromDate      *time.Time
+	ToDate        *time.Time
+	OnlyOpen      bool
+	OverdueBefore *time.Time
+	AfterDueOn    *time.Time
+	AfterID       *uuid.UUID
+	RowLimit      int32
+}
+
+type ListObligationsRow struct {
+	ID                uuid.UUID
+	TransactionID     *uuid.UUID
+	Kind              string
+	Source            string
+	Status            string
+	AmountCents       int64
+	DueOn             time.Time
+	Description       string
+	CategoryID        uuid.UUID
+	Scope             string
+	PersonMemberID    *uuid.UUID
+	PaymentMethod     string
+	AccountID         *uuid.UUID
+	CompetenceOn      time.Time
+	CreatedByMemberID uuid.UUID
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	PaidCents         int64
+}
+
+// Obligations by due date (oldest first), keyset-paginated on (due_on, id).
+// only_open: not cancelled and not fully paid; overdue_before: also due before that date.
+func (q *Queries) ListObligations(ctx context.Context, arg ListObligationsParams) ([]ListObligationsRow, error) {
+	rows, err := q.db.Query(ctx, listObligations,
+		arg.HouseholdID,
+		arg.Kind,
+		arg.FromDate,
+		arg.ToDate,
+		arg.OnlyOpen,
+		arg.OverdueBefore,
+		arg.AfterDueOn,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListObligationsRow
+	for rows.Next() {
+		var i ListObligationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TransactionID,
+			&i.Kind,
+			&i.Source,
+			&i.Status,
+			&i.AmountCents,
+			&i.DueOn,
+			&i.Description,
+			&i.CategoryID,
+			&i.Scope,
+			&i.PersonMemberID,
+			&i.PaymentMethod,
+			&i.AccountID,
+			&i.CompetenceOn,
+			&i.CreatedByMemberID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PaidCents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockObligation = `-- name: LockObligation :one
+SELECT id FROM obligations WHERE household_id = $1 AND id = $2 FOR UPDATE
+`
+
+type LockObligationParams struct {
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+// Serialises payments and edits of one obligation (ADR 0007): the caller re-reads it after.
+func (q *Queries) LockObligation(ctx context.Context, arg LockObligationParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockObligation, arg.HouseholdID, arg.ID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const updatePlannedObligation = `-- name: UpdatePlannedObligation :exec
+UPDATE obligations
+SET amount_cents = $1, due_on = $2, description = $3, updated_at = now()
+WHERE household_id = $4 AND id = $5 AND status = 'PLANNED'
+`
+
+type UpdatePlannedObligationParams struct {
+	AmountCents int64
+	DueOn       time.Time
+	Description string
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+func (q *Queries) UpdatePlannedObligation(ctx context.Context, arg UpdatePlannedObligationParams) error {
+	_, err := q.db.Exec(ctx, updatePlannedObligation,
+		arg.AmountCents,
+		arg.DueOn,
+		arg.Description,
+		arg.HouseholdID,
+		arg.ID,
+	)
+	return err
 }

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.7.0
+  version: 0.8.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -19,6 +19,7 @@ tags:
   - name: accounts
   - name: transfers
   - name: transactions
+  - name: obligations
 
 paths:
   /health:
@@ -543,12 +544,14 @@ paths:
     post:
       tags: [transactions]
       operationId: createTransaction
-      summary: Lançar despesa ou receita imediata (paga ou recebida agora, numa conta)
+      summary: Lançar despesa ou receita, imediata (paga agora) ou prevista
       description: |
-        Grava atomicamente a transação (consumo/receita), a obrigação confirmada, o pagamento e o movimento de caixa
-        (saída para despesa, entrada para receita). O valor conta uma vez para a família, quem quer que tenha pago ou
-        consumido (sem divisão entre membros). `scope` e `personMemberId` servem só para filtro.
-        Por enquanto só existe `mode=IMMEDIATE` com conta; lançamento previsto e cartão de crédito vêm depois.
+        `mode=IMMEDIATE`: grava atomicamente a transação (consumo/receita), a obrigação confirmada, o pagamento e o
+        movimento de caixa (saída para despesa, entrada para receita). A resposta traz `transaction` e `obligation`.
+        `mode=PLANNED`: grava só a obrigação prevista (`status=PLANNED`, compromisso, ainda não consumo), com `dueOn`;
+        `transaction` vem `null`. O primeiro pagamento (`POST /obligations/{id}/payments`) a confirma.
+        O valor conta uma vez para a família, quem quer que tenha pago ou consumido (sem divisão entre membros).
+        `scope` e `personMemberId` servem só para filtro. Cartão de crédito vem depois.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -563,7 +566,7 @@ paths:
             Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Transaction" }
+              schema: { $ref: "#/components/schemas/EntryCreated" }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
@@ -588,6 +591,116 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /api/v1/households/{householdId}/obligations:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+    get:
+      tags: [obligations]
+      operationId: listObligations
+      summary: Contas a pagar e a receber por vencimento (mais antigas primeiro; paginação por cursor)
+      description: |
+        `view=open` (padrão): não canceladas e com saldo em aberto. `view=overdue`: em aberto e vencidas antes de hoje
+        (data no fuso da família). `view=all`: todas, inclusive quitadas. Compromissos, não consumo.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: view
+          in: query
+          schema: { type: string, enum: [open, overdue, all] }
+        - name: kind
+          in: query
+          schema: { $ref: "#/components/schemas/ObligationKind" }
+        - name: from
+          in: query
+          description: Vencimento a partir de
+          schema: { $ref: "#/components/schemas/Date" }
+        - name: to
+          in: query
+          description: Vencimento até
+          schema: { $ref: "#/components/schemas/Date" }
+      responses:
+        "200":
+          description: Página de obrigações
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObligationPage" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/obligations/{obligationId}:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/ObligationId"
+    get:
+      tags: [obligations]
+      operationId: getObligation
+      summary: Obrigação com seus pagamentos
+      responses:
+        "200":
+          description: Obrigação
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObligationDetail" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [obligations]
+      operationId: updateObligation
+      summary: Editar uma previsão ainda não paga (valor, vencimento, descrição)
+      description: Só `status=PLANNED`; caso contrário 422 `OBLIGATION_NOT_PLANNED`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateObligationRequest" }
+      responses:
+        "200":
+          description: Previsão atualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObligationDetail" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/obligations/{obligationId}/payments:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/ObligationId"
+    post:
+      tags: [obligations]
+      operationId: payObligation
+      summary: Pagar ou receber (total ou parcialmente) uma obrigação
+      description: |
+        Grava o pagamento e o movimento de caixa atomicamente, nunca acima do saldo em aberto
+        (422 `AMOUNT_EXCEEDS_OUTSTANDING`; quitada → 422 `OBLIGATION_ALREADY_PAID`).
+        O primeiro pagamento de uma previsão a confirma: cria a transação (valor total, data = competência) e a vincula.
+        `accountId` padrão = conta da obrigação; obrigatório se ela não tiver conta.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PayObligationRequest" }
+      responses:
+        "201":
+          description: Pagamento registrado (ou repetido com a mesma Idempotency-Key)
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObligationDetail" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
 security:
   - sessionCookie: []
 
@@ -609,6 +722,12 @@ components:
         Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
         Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
       schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[!-~]+$" }
+
+    ObligationId:
+      name: obligationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
 
     TransactionId:
       name: transactionId
@@ -1070,11 +1189,17 @@ components:
     TransactionPayment:
       type: object
       additionalProperties: false
-      required: [method, accountId, mode]
+      required: [method, mode]
       properties:
         method: { $ref: "#/components/schemas/AccountPaymentMethod" }
-        accountId: { type: string, format: uuid, description: Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro }
-        mode: { type: string, enum: [IMMEDIATE] }
+        accountId:
+          type: string
+          format: uuid
+          description: Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro. Obrigatória em IMMEDIATE; opcional em PLANNED.
+        mode: { type: string, enum: [IMMEDIATE, PLANNED] }
+        dueOn:
+          allOf: [{ $ref: "#/components/schemas/Date" }]
+          description: Vencimento; obrigatório em PLANNED e proibido em IMMEDIATE.
 
     CreateTransactionRequest:
       type: object
@@ -1085,9 +1210,104 @@ components:
         scope: { $ref: "#/components/schemas/Scope" }
         personMemberId: { type: string, format: uuid, description: Membro ativo; obrigatório se PERSONAL }
         description: { type: string, minLength: 1, maxLength: 200 }
-        merchant: { type: string, maxLength: 120 }
-        notes: { type: string, maxLength: 1000 }
+        merchant: { type: string, maxLength: 120, description: Só em IMMEDIATE }
+        notes: { type: string, maxLength: 1000, description: Só em IMMEDIATE }
         amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
         categoryId: { type: string, format: uuid, description: Categoria ativa do mesmo tipo (despesa/receita) }
-        occurredOn: { $ref: "#/components/schemas/Date" }
+        occurredOn:
+          allOf: [{ $ref: "#/components/schemas/Date" }]
+          description: Data da compra/competência (em PLANNED, a data em que o consumo será contado ao confirmar)
         payment: { $ref: "#/components/schemas/TransactionPayment" }
+
+    ObligationKind:
+      type: string
+      enum: [PAYABLE, RECEIVABLE]
+
+    Obligation:
+      type: object
+      additionalProperties: false
+      required: [id, transactionId, kind, source, status, paymentStatus, isOverdue, amountCents, paidCents, outstandingCents, dueOn, description, categoryId, scope, personMemberId, paymentMethod, accountId, competenceOn, createdByMemberId, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        transactionId: { type: [string, "null"], format: uuid, description: Nulo enquanto prevista }
+        kind: { $ref: "#/components/schemas/ObligationKind" }
+        source: { type: string, enum: [DIRECT, RECURRING, MANUAL_FORECAST] }
+        status: { type: string, enum: [PLANNED, CONFIRMED, CANCELLED] }
+        paymentStatus: { type: string, enum: [UNPAID, PARTIALLY_PAID, PAID], description: Derivado dos pagamentos }
+        isOverdue: { type: boolean, description: Vencida antes de hoje (fuso da família) e com saldo em aberto }
+        amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        paidCents: { type: integer, minimum: 0 }
+        outstandingCents: { type: integer, minimum: 0 }
+        dueOn: { $ref: "#/components/schemas/Date" }
+        description: { type: string }
+        categoryId: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/Scope" }
+        personMemberId: { type: [string, "null"], format: uuid }
+        paymentMethod: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        accountId: { type: [string, "null"], format: uuid }
+        competenceOn: { $ref: "#/components/schemas/Date" }
+        createdByMemberId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ObligationPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Obligation" }
+        nextCursor: { type: [string, "null"] }
+
+    ObligationPayment:
+      type: object
+      additionalProperties: false
+      required: [id, amountCents, paidOn, accountId, movementId, createdByMemberId, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        amountCents: { type: integer, minimum: 1 }
+        paidOn: { $ref: "#/components/schemas/Date" }
+        accountId: { type: string, format: uuid }
+        movementId: { type: string, format: uuid }
+        createdByMemberId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+
+    ObligationDetail:
+      type: object
+      additionalProperties: false
+      required: [obligation, payments]
+      properties:
+        obligation: { $ref: "#/components/schemas/Obligation" }
+        payments:
+          type: array
+          items: { $ref: "#/components/schemas/ObligationPayment" }
+
+    EntryCreated:
+      type: object
+      additionalProperties: false
+      required: [transaction, obligation]
+      properties:
+        transaction:
+          description: Nulo em lançamento previsto (ainda não é consumo)
+          oneOf:
+            - { $ref: "#/components/schemas/Transaction" }
+            - { type: "null" }
+        obligation: { $ref: "#/components/schemas/Obligation" }
+
+    PayObligationRequest:
+      type: object
+      additionalProperties: false
+      required: [amountCents, paidOn]
+      properties:
+        amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        paidOn: { $ref: "#/components/schemas/Date" }
+        accountId: { type: string, format: uuid, description: Padrão = conta da obrigação }
+
+    UpdateObligationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        dueOn: { $ref: "#/components/schemas/Date" }
+        description: { type: string, minLength: 1, maxLength: 200 }

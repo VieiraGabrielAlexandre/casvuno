@@ -31,9 +31,10 @@ VALUES (@id, @household_id, @user_id, @role, 'ACTIVE', @joined_at)
 RETURNING id, role;
 
 -- name: GetActiveMembership :one
-SELECT id, role
-FROM household_members
-WHERE household_id = @household_id AND user_id = @user_id AND status = 'ACTIVE';
+SELECT m.id, m.role, h.timezone
+FROM household_members m
+JOIN households h ON h.id = m.household_id
+WHERE m.household_id = @household_id AND m.user_id = @user_id AND m.status = 'ACTIVE';
 
 -- name: GetMemberByUser :one
 SELECT id, role, status

@@ -27,3 +27,14 @@ func ParseDate(s string) (time.Time, error) {
 
 // FormatDate renders a calendar date as YYYY-MM-DD.
 func FormatDate(t time.Time) string { return t.Format(DateLayout) }
+
+// Today returns the calendar date (UTC midnight, like ParseDate) of instant now in the IANA
+// zone tz. An unknown zone falls back to UTC; zones are validated when households are saved.
+func Today(now time.Time, tz string) time.Time {
+	loc, err := time.LoadLocation(tz)
+	if err != nil || tz == "" {
+		loc = time.UTC
+	}
+	y, m, d := now.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}

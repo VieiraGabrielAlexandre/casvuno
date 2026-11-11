@@ -28,7 +28,7 @@
 
 **Concorrência financeira** (READ COMMITTED + locks explícitos):
 - pagamento de fatura: `SELECT … FROM card_invoices WHERE id=$ AND household_id=$ FOR UPDATE`, depois soma e verifica o teto;
-- pagamento de obrigação e confirmação: `FOR UPDATE` na obrigação;
+- pagamento de obrigação e confirmação (F3.2): `FOR UPDATE` na obrigação, releitura do total pago sob o lock, depois a conta (via movimento) antes de inserir transação e pagamento. Teto: 422 `AMOUNT_EXCEEDS_OUTSTANDING`/`OBLIGATION_ALREADY_PAID`. Testado com 10 pagamentos simultâneos do valor total: exatamente um aceito e uma transação só;
 - inserção de parcela e fechamento: `FOR UPDATE` na fatura;
 - void: `FOR UPDATE` na transação;
 - transferência (F2.3): `FOR UPDATE` nas duas contas **em ordem fixa de ID** (evita deadlock entre transferências em sentidos opostos) e exige contas ativas (evita a corrida com o arquivamento); sem verificação de saldo (ADR 0002); as duas pernas na mesma transação SQL. Testado com 20 transferências simultâneas em sentidos opostos;

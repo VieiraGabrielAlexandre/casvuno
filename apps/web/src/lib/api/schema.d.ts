@@ -377,11 +377,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Lançar despesa ou receita imediata (paga ou recebida agora, numa conta)
-         * @description Grava atomicamente a transação (consumo/receita), a obrigação confirmada, o pagamento e o movimento de caixa
-         *     (saída para despesa, entrada para receita). O valor conta uma vez para a família, quem quer que tenha pago ou
-         *     consumido (sem divisão entre membros). `scope` e `personMemberId` servem só para filtro.
-         *     Por enquanto só existe `mode=IMMEDIATE` com conta; lançamento previsto e cartão de crédito vêm depois.
+         * Lançar despesa ou receita, imediata (paga agora) ou prevista
+         * @description `mode=IMMEDIATE`: grava atomicamente a transação (consumo/receita), a obrigação confirmada, o pagamento e o
+         *     movimento de caixa (saída para despesa, entrada para receita). A resposta traz `transaction` e `obligation`.
+         *     `mode=PLANNED`: grava só a obrigação prevista (`status=PLANNED`, compromisso, ainda não consumo), com `dueOn`;
+         *     `transaction` vem `null`. O primeiro pagamento (`POST /obligations/{id}/payments`) a confirma.
+         *     O valor conta uma vez para a família, quem quer que tenha pago ou consumido (sem divisão entre membros).
+         *     `scope` e `personMemberId` servem só para filtro. Cartão de crédito vem depois.
          */
         post: operations["createTransaction"];
         delete?: never;
@@ -404,6 +406,79 @@ export interface paths {
         get: operations["getTransaction"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/obligations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Contas a pagar e a receber por vencimento (mais antigas primeiro; paginação por cursor)
+         * @description `view=open` (padrão): não canceladas e com saldo em aberto. `view=overdue`: em aberto e vencidas antes de hoje
+         *     (data no fuso da família). `view=all`: todas, inclusive quitadas. Compromissos, não consumo.
+         */
+        get: operations["listObligations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/obligations/{obligationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                obligationId: components["parameters"]["ObligationId"];
+            };
+            cookie?: never;
+        };
+        /** Obrigação com seus pagamentos */
+        get: operations["getObligation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Editar uma previsão ainda não paga (valor, vencimento, descrição)
+         * @description Só `status=PLANNED`; caso contrário 422 `OBLIGATION_NOT_PLANNED`.
+         */
+        patch: operations["updateObligation"];
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/obligations/{obligationId}/payments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                obligationId: components["parameters"]["ObligationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pagar ou receber (total ou parcialmente) uma obrigação
+         * @description Grava o pagamento e o movimento de caixa atomicamente, nunca acima do saldo em aberto
+         *     (422 `AMOUNT_EXCEEDS_OUTSTANDING`; quitada → 422 `OBLIGATION_ALREADY_PAID`).
+         *     O primeiro pagamento de uma previsão a confirma: cria a transação (valor total, data = competência) e a vincula.
+         *     `accountId` padrão = conta da obrigação; obrigatório se ela não tiver conta.
+         */
+        post: operations["payObligation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -722,11 +797,13 @@ export interface components {
             method: components["schemas"]["AccountPaymentMethod"];
             /**
              * Format: uuid
-             * @description Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro
+             * @description Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro. Obrigatória em IMMEDIATE; opcional em PLANNED.
              */
-            accountId: string;
+            accountId?: string;
             /** @enum {string} */
-            mode: "IMMEDIATE";
+            mode: "IMMEDIATE" | "PLANNED";
+            /** @description Vencimento; obrigatório em PLANNED e proibido em IMMEDIATE. */
+            dueOn?: components["schemas"]["Date"];
         };
         CreateTransactionRequest: {
             kind: components["schemas"]["TransactionKind"];
@@ -737,7 +814,9 @@ export interface components {
              */
             personMemberId?: string;
             description: string;
+            /** @description Só em IMMEDIATE */
             merchant?: string;
+            /** @description Só em IMMEDIATE */
             notes?: string;
             amountCents: number;
             /**
@@ -745,8 +824,93 @@ export interface components {
              * @description Categoria ativa do mesmo tipo (despesa/receita)
              */
             categoryId: string;
+            /** @description Data da compra/competência (em PLANNED, a data em que o consumo será contado ao confirmar) */
             occurredOn: components["schemas"]["Date"];
             payment: components["schemas"]["TransactionPayment"];
+        };
+        /** @enum {string} */
+        ObligationKind: "PAYABLE" | "RECEIVABLE";
+        Obligation: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description Nulo enquanto prevista
+             */
+            transactionId: string | null;
+            kind: components["schemas"]["ObligationKind"];
+            /** @enum {string} */
+            source: "DIRECT" | "RECURRING" | "MANUAL_FORECAST";
+            /** @enum {string} */
+            status: "PLANNED" | "CONFIRMED" | "CANCELLED";
+            /**
+             * @description Derivado dos pagamentos
+             * @enum {string}
+             */
+            paymentStatus: "UNPAID" | "PARTIALLY_PAID" | "PAID";
+            /** @description Vencida antes de hoje (fuso da família) e com saldo em aberto */
+            isOverdue: boolean;
+            amountCents: number;
+            paidCents: number;
+            outstandingCents: number;
+            dueOn: components["schemas"]["Date"];
+            description: string;
+            /** Format: uuid */
+            categoryId: string;
+            scope: components["schemas"]["Scope"];
+            /** Format: uuid */
+            personMemberId: string | null;
+            paymentMethod: components["schemas"]["AccountPaymentMethod"];
+            /** Format: uuid */
+            accountId: string | null;
+            competenceOn: components["schemas"]["Date"];
+            /** Format: uuid */
+            createdByMemberId: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ObligationPage: {
+            items: components["schemas"]["Obligation"][];
+            nextCursor: string | null;
+        };
+        ObligationPayment: {
+            /** Format: uuid */
+            id: string;
+            amountCents: number;
+            paidOn: components["schemas"]["Date"];
+            /** Format: uuid */
+            accountId: string;
+            /** Format: uuid */
+            movementId: string;
+            /** Format: uuid */
+            createdByMemberId: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ObligationDetail: {
+            obligation: components["schemas"]["Obligation"];
+            payments: components["schemas"]["ObligationPayment"][];
+        };
+        EntryCreated: {
+            /** @description Nulo em lançamento previsto (ainda não é consumo) */
+            transaction: components["schemas"]["Transaction"] | null;
+            obligation: components["schemas"]["Obligation"];
+        };
+        PayObligationRequest: {
+            amountCents: number;
+            paidOn: components["schemas"]["Date"];
+            /**
+             * Format: uuid
+             * @description Padrão = conta da obrigação
+             */
+            accountId?: string;
+        };
+        UpdateObligationRequest: {
+            amountCents?: number;
+            dueOn?: components["schemas"]["Date"];
+            description?: string;
         };
     };
     responses: {
@@ -768,6 +932,7 @@ export interface components {
          *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
          */
         IdempotencyKey: string;
+        ObligationId: string;
         TransactionId: string;
         AccountId: string;
         /** @description Itens por página (padrão 25). */
@@ -1543,7 +1708,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Transaction"];
+                    "application/json": components["schemas"]["EntryCreated"];
                 };
             };
             400: components["responses"]["Error"];
@@ -1577,6 +1742,141 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    listObligations: {
+        parameters: {
+            query?: {
+                /** @description Itens por página (padrão 25). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Valor opaco de `nextCursor` da página anterior. */
+                cursor?: components["parameters"]["Cursor"];
+                view?: "open" | "overdue" | "all";
+                kind?: components["schemas"]["ObligationKind"];
+                /** @description Vencimento a partir de */
+                from?: components["schemas"]["Date"];
+                /** @description Vencimento até */
+                to?: components["schemas"]["Date"];
+            };
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Página de obrigações */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObligationPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    getObligation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                obligationId: components["parameters"]["ObligationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Obrigação */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObligationDetail"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateObligation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                obligationId: components["parameters"]["ObligationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateObligationRequest"];
+            };
+        };
+        responses: {
+            /** @description Previsão atualizada */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObligationDetail"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    payObligation: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+                 *     Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+                 *     Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+                 *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                obligationId: components["parameters"]["ObligationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PayObligationRequest"];
+            };
+        };
+        responses: {
+            /** @description Pagamento registrado (ou repetido com a mesma Idempotency-Key) */
+            201: {
+                headers: {
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObligationDetail"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
 }

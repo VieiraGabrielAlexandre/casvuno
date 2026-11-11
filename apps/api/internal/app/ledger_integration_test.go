@@ -43,13 +43,22 @@ func expenseBody(categoryID, accountID string, cents int64) map[string]any {
 	return entryBody("EXPENSE", categoryID, accountID, cents, "2026-11-10")
 }
 
-// createTransaction records an entry with a fresh Idempotency-Key and returns it.
+// entryDTO is the response of POST /transactions.
+type entryDTO struct {
+	Transaction *transactionDTO `json:"transaction"`
+	Obligation  obligationDTO   `json:"obligation"`
+}
+
+// createTransaction records an immediate entry with a fresh Idempotency-Key and returns it.
 func (c *client) createTransaction(householdID string, body map[string]any) transactionDTO {
 	c.api.t.Helper()
-	var tx transactionDTO
+	var e entryDTO
 	c.expect(http.StatusCreated, http.MethodPost, "/api/v1/households/"+householdID+"/transactions", body,
-		"Idempotency-Key", uuid.NewString()).decode(c.api.t, &tx)
-	return tx
+		"Idempotency-Key", uuid.NewString()).decode(c.api.t, &e)
+	if e.Transaction == nil {
+		c.api.t.Fatal("an immediate entry must return its transaction")
+	}
+	return *e.Transaction
 }
 
 // consumption is the family consumption of the period (INV-10), computed the way the
@@ -80,8 +89,13 @@ func TestImmediateExpense(t *testing.T) {
 	}
 
 	r := owner.expect(http.StatusCreated, http.MethodPost, path, body, "Idempotency-Key", "t01")
-	var tx transactionDTO
-	r.decode(t, &tx)
+	var e entryDTO
+	r.decode(t, &e)
+	if e.Transaction == nil || e.Obligation.Status != "CONFIRMED" || e.Obligation.PaymentStatus != "PAID" ||
+		e.Obligation.TransactionID == nil || *e.Obligation.TransactionID != e.Transaction.ID {
+		t.Fatalf("entry = %s", r.body)
+	}
+	tx := *e.Transaction
 	if tx.Kind != "EXPENSE" || tx.Scope != "PERSONAL" || tx.PersonMemberID == nil || *tx.PersonMemberID != h.MemberID ||
 		tx.Description != "Café" || tx.Merchant == nil || *tx.Merchant != "Padaria" || tx.AmountCents != 1250 ||
 		tx.OccurredOn != "2026-11-10" || tx.PaymentMethod != "PIX" || tx.AccountID != acc.ID || tx.Status != "ACTIVE" ||
@@ -266,7 +280,11 @@ func TestTransactionValidation(t *testing.T) {
 		{"unknown account", with(map[string]any{"payment": payment("PIX", uuid.NewString(), "IMMEDIATE")}), 422, "ACCOUNT_NOT_FOUND", "payment.accountId"},
 		{"missing account", with(map[string]any{"payment": payment("PIX", "", "IMMEDIATE")}), 400, "VALIDATION_ERROR", "payment.accountId"},
 		{"credit card not yet supported", with(map[string]any{"payment": payment("CREDIT_CARD", acc.ID, "IMMEDIATE")}), 400, "VALIDATION_ERROR", "payment.method"},
-		{"planned not yet supported", with(map[string]any{"payment": payment("PIX", acc.ID, "PLANNED")}), 400, "VALIDATION_ERROR", "payment.mode"},
+		{"unknown mode", with(map[string]any{"payment": payment("PIX", acc.ID, "LATER")}), 400, "VALIDATION_ERROR", "payment.mode"},
+		{"planned without due date", with(map[string]any{"payment": payment("PIX", acc.ID, "PLANNED")}), 400, "VALIDATION_ERROR", "payment.dueOn"},
+		{"immediate with due date", with(map[string]any{"payment": map[string]any{"method": "PIX", "accountId": acc.ID, "mode": "IMMEDIATE", "dueOn": "2026-11-20"}}), 400, "VALIDATION_ERROR", "payment.dueOn"},
+		{"planned with merchant", with(map[string]any{"merchant": "Feira", "payment": map[string]any{"method": "PIX", "mode": "PLANNED", "dueOn": "2026-11-20"}}), 400, "VALIDATION_ERROR", "merchant"},
+		{"planned on an archived account", with(map[string]any{"payment": map[string]any{"method": "PIX", "accountId": archivedAcc.ID, "mode": "PLANNED", "dueOn": "2026-11-20"}}), 422, "ACCOUNT_ARCHIVED", "payment.accountId"},
 		{"personal without person", with(map[string]any{"scope": "PERSONAL"}), 400, "VALIDATION_ERROR", "personMemberId"},
 		{"unknown person", with(map[string]any{"personMemberId": uuid.NewString()}), 422, "PERSON_NOT_MEMBER", "personMemberId"},
 		{"invalid scope", with(map[string]any{"scope": "SHARED"}), 400, "VALIDATION_ERROR", "scope"},

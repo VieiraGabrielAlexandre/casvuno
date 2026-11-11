@@ -155,9 +155,10 @@ func (q *Queries) DeactivateMember(ctx context.Context, arg DeactivateMemberPara
 }
 
 const getActiveMembership = `-- name: GetActiveMembership :one
-SELECT id, role
-FROM household_members
-WHERE household_id = $1 AND user_id = $2 AND status = 'ACTIVE'
+SELECT m.id, m.role, h.timezone
+FROM household_members m
+JOIN households h ON h.id = m.household_id
+WHERE m.household_id = $1 AND m.user_id = $2 AND m.status = 'ACTIVE'
 `
 
 type GetActiveMembershipParams struct {
@@ -166,14 +167,15 @@ type GetActiveMembershipParams struct {
 }
 
 type GetActiveMembershipRow struct {
-	ID   uuid.UUID
-	Role string
+	ID       uuid.UUID
+	Role     string
+	Timezone string
 }
 
 func (q *Queries) GetActiveMembership(ctx context.Context, arg GetActiveMembershipParams) (GetActiveMembershipRow, error) {
 	row := q.db.QueryRow(ctx, getActiveMembership, arg.HouseholdID, arg.UserID)
 	var i GetActiveMembershipRow
-	err := row.Scan(&i.ID, &i.Role)
+	err := row.Scan(&i.ID, &i.Role, &i.Timezone)
 	return i, err
 }
 
