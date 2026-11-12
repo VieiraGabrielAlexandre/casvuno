@@ -17,6 +17,8 @@ type Props = Omit<
   error?: string;
   /** Accepts a "-" anywhere in the text to make the amount negative (e.g. opening balance). */
   allowNegative?: boolean;
+  /** Highlighted amount (quick entry). */
+  large?: boolean;
 };
 
 /**
@@ -29,6 +31,7 @@ export function MoneyInput({
   onChange,
   error,
   allowNegative = false,
+  large = false,
   id,
   ...input
 }: Props) {
@@ -46,7 +49,7 @@ export function MoneyInput({
       <div className="relative">
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-muted-foreground"
+          className={`pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-muted-foreground ${large ? "text-lg" : "text-sm"}`}
         >
           R$
         </span>
@@ -55,7 +58,11 @@ export function MoneyInput({
           type="text"
           inputMode={allowNegative ? "text" : "numeric"}
           autoComplete="off"
-          className="pl-9 text-right tabular-nums"
+          className={
+            large
+              ? "h-14 pl-12 text-right text-3xl font-semibold tabular-nums md:text-3xl"
+              : "pl-9 text-right tabular-nums"
+          }
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? errorId : undefined}
           value={text}
