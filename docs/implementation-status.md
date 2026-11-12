@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F3 — Lançamentos: **F3.1–F3.4 concluídas** (entregas 8–11, API; F3.4 ainda não commitada). Próxima: F3.5 (telas de lançamento rápido, favoritos, lista com filtros, pendências e "Corrigir").
+F3 — Lançamentos: **concluída** (F3.1–F3.4 na API, F3.5 na web; entrega 12 ainda não commitada). Próxima: F4.1 (domínio puro de cartões: `Split` e ciclo da fatura).
 
 ## Concluído
 
@@ -268,11 +268,42 @@ I-04, I-08, I-15 (deslocar compra retroativa para a próxima fatura aberta), I-1
 | `go mod tidy -diff` / `make gen` | limpo / idempotente |
 | Stack real: `make up`, `migrate-down`/`migrate-up`, curl, `make check-invariants` | versão 10, dirty = false; favorito "Café" R$ 12,50 criado e listado; lançamento com os campos dele; `createdBy=me&limit=1` → o café; edição limpa o valor; DELETE 204 e lista vazia; nenhuma violação |
 
+### 2026-11-11 — Entrega 12: telas de lançamento, favoritos, lançamentos e contas a pagar (F3.5, web)
+- **Lançamento rápido (`/entry`):**
+  - botão `+` flutuante na família, nos lançamentos e nas contas a pagar;
+  - despesa/receita, valor em destaque (`MoneyInput large`), categoria (subcategorias recuadas), descrição opcional (vazia = nome da categoria), hoje no fuso da família por padrão;
+  - "Pago agora" ou "Previsto" (vencimento; conta opcional; sem estabelecimento/observações, I-44); conta, meio; "Mais detalhes" com escopo, pessoa, estabelecimento e observações (e o aviso de que não há divisão entre membros);
+  - **favoritos** como botões (o completo preenche tudo e foca o "Lançar") e **"Repetir último"** (`createdBy=me&limit=1`, com a data de hoje);
+  - `Idempotency-Key` por submissão, botão bloqueado enquanto envia e offline, sucesso só depois do servidor, erros `payment.*` da API ligados aos campos.
+- **Corrigir (`/entry?correct=<id>`):** formulário preenchido com o lançamento; cancela o original e lança o novo (I-47).
+- **Lançamentos (`/transactions`):**
+  - filtros recolhíveis: texto, período, tipo, categoria, conta, meio, escopo, pessoa e situação, com contador;
+  - lista paginada ("Carregar mais") com sinal e "consumo/receita";
+  - cancelados riscados;
+  - por item: detalhes, **Editar** (campos não estruturais, envia só o que mudou), **Corrigir valor ou data** e **Cancelar lançamento** com confirmação explicando o estorno.
+- **Contas a pagar e receber (`/obligations`):**
+  - "Compromissos" com filtros Em aberto/Vencidas/Todas e A pagar/A receber, situação (Prevista, Parcial, Vencida, Paga…) e quanto falta;
+  - **Pagar/Receber** (valor sugerido = saldo em aberto, limitado a ele; conta da obrigação ou a única ativa; mensagem com o que falta);
+  - **Editar previsão** e **Cancelar previsão** com confirmação.
+- **Favoritos (`/favorites`):** listar, criar (tipo, nome, descrição, valor padrão opcional, categoria, conta opcional, meio, escopo, pessoa), editar (só o que mudou; 0/"" limpam) e excluir com confirmação.
+- **Navegação:** a página da família ganhou Lançar, Lançamentos, Contas a pagar e receber e Favoritos.
+- **Código:** `features/ledger` (hooks de transações, obrigações e favoritos, `entry.ts` puro, rótulos, formulário, botão `+`), `features/transactions`, `features/obligations`, `features/templates`; tipos novos em `lib/api/client.ts`. Sem dependência nova.
+
+## Comandos executados (entrega 12) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `pnpm typecheck` | 1ª: erro de tipo na lista de consultas de `entry-view`; corrigido |
+| `eslint` | 1ª: 3 avisos do React Compiler por `form.watch`; trocado por `useWatch` |
+| `pnpm test` (Vitest) | 84/84 (21 novos): conversões favorito/último/correção → requisição (imediato, previsão sem estabelecimento/observações); favorito completo em 2 cliques + `Idempotency-Key`; validação sem chamar a API; previsão com vencimento e descrição = categoria; receita só oferece categorias de receita; repetir último com a data de hoje; erro `payment.accountId` no campo Conta; **corrigir**: void, falha de rede no novo (aviso), reenvio com a mesma chave, sem segundo void, botão bloqueado depois; offline bloqueia; pagamento sugere o saldo em aberto, recusa valor maior sem chamar a API e informa o que falta; filtros e PATCH só com o que mudou; favoritos (criar sem opcionais vazios, editar com 0/"") |
+| `make lint` / `make test` | 0 issues, ESLint/Prettier/`tsc` ok / Go ok; Vitest 84/84 |
+| `make build` | export estático com `/entry`, `/transactions`, `/obligations` e `/favorites` |
+| Chrome headless (viewport 390×844) via DevTools Protocol, `make web` + API do Compose | botão `+` na família → `/entry`; toque no favorito "Café" preenche R$ 12,50; "Lançar" → "Despesa de R$ 12,50 lançada em 11/11/2026" (**3 interações**); lista mostra o café e o mercado; cancelar o mercado com confirmação → some da lista padrão; condomínio previsto aparece "Vencida"; Pagar sugere R$ 650,00 e, sem conta definida e com duas contas, pede a conta; com a conta → "paga por completo"; favoritos listados. Saldo final conferido pela API: 100000 − 1250 − 23490 + 23490 − 65000 = 33750 |
+
 ## Próxima tarefa
-F3.5 — web: lançamento rápido (botão `+`, valor em destaque, hoje por padrão, imediato/previsto), favoritos (usar e gerenciar), "repetir último", lista de transações com filtros, pendências com pagamento e cancelamento de previsão, "Corrigir" (void + novo).
+F4.1 — `cards/domain`: `Split` (RN-010, fuzz) e `cardcycle` (ADR 0003), funções puras.
 
 ## Pendências reais
-- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). F3.1–F3.4 não têm tela (lançamento rápido, favoritos, lista com filtros, pendências e "Corrigir" são a F3.5). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
+- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos a cobrir lá, **da F3.5:** `+` → favorito completo → Lançar em ≤ 3 interações; lançamento pago e previsto (com e sem conta); repetir último; descrição vazia vira a categoria; duplo clique/retentativa sem lançar em dobro; offline sem falso sucesso (T19 parcial); filtros da lista (texto, período, categoria com subcategorias, cancelados); editar lançamento; corrigir (original cancelado, novo lançado, saldo certo); cancelar lançamento e conferir o saldo; pagar previsão parcial e total, vencida, previsão sem conta pedindo a conta; editar e cancelar previsão; criar/editar/excluir favorito; favorito invisível para outro membro. **Das fases anteriores:** categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
 - **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
 - **Sem limpeza de sessões, convites e chaves de idempotência expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).

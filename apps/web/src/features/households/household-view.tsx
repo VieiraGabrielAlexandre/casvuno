@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { QuickEntryButton } from "@/features/ledger/quick-entry-button";
 import { errorMessage, type Household } from "@/lib/api/client";
 
 import {
@@ -43,6 +44,18 @@ export function HouseholdView({ id }: { id: string }) {
           Você é {roleLabel[h.role].toLowerCase()} · fuso {h.timezone}
         </p>
         <nav className="flex flex-wrap gap-4 text-sm">
+          <Link href={`/entry?household=${h.id}`} className="underline">
+            Lançar
+          </Link>
+          <Link href={`/transactions?household=${h.id}`} className="underline">
+            Lançamentos
+          </Link>
+          <Link href={`/obligations?household=${h.id}`} className="underline">
+            Contas a pagar e receber
+          </Link>
+          <Link href={`/favorites?household=${h.id}`} className="underline">
+            Favoritos
+          </Link>
           <Link href={`/accounts?household=${h.id}`} className="underline">
             Contas
           </Link>
@@ -56,6 +69,7 @@ export function HouseholdView({ id }: { id: string }) {
       </div>
       <Members household={h} />
       {isOwner && <Invites householdId={h.id} />}
+      <QuickEntryButton householdId={h.id} />
     </>
   );
 }

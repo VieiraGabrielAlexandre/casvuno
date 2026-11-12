@@ -20,6 +20,29 @@ export type UpdateAccountRequest =
   components["schemas"]["UpdateAccountRequest"];
 export type CreateTransferRequest =
   components["schemas"]["CreateTransferRequest"];
+export type TransactionKind = components["schemas"]["TransactionKind"];
+export type Scope = components["schemas"]["Scope"];
+export type PaymentMethod = components["schemas"]["AccountPaymentMethod"];
+export type Transaction = components["schemas"]["Transaction"];
+export type CreateTransactionRequest =
+  components["schemas"]["CreateTransactionRequest"];
+export type UpdateTransactionRequest =
+  components["schemas"]["UpdateTransactionRequest"];
+export type EntryCreated = components["schemas"]["EntryCreated"];
+export type Obligation = components["schemas"]["Obligation"];
+export type ObligationDetail = components["schemas"]["ObligationDetail"];
+export type PayObligationRequest =
+  components["schemas"]["PayObligationRequest"];
+export type UpdateObligationRequest =
+  components["schemas"]["UpdateObligationRequest"];
+export type QuickTemplate = components["schemas"]["QuickTemplate"];
+export type CreateQuickTemplateRequest =
+  components["schemas"]["CreateQuickTemplateRequest"];
+export type UpdateQuickTemplateRequest =
+  components["schemas"]["UpdateQuickTemplateRequest"];
+export type TransactionQuery = NonNullable<
+  paths["/api/v1/households/{householdId}/transactions"]["get"]["parameters"]["query"]
+>;
 type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 export type FieldError = NonNullable<ErrorEnvelope["error"]["details"]>[number];
 
