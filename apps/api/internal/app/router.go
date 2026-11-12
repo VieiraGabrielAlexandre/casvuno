@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/accounts"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/cards"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/categories"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/households"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/identity"
@@ -19,7 +20,7 @@ import (
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/httpx"
 )
 
-func newRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, ids *identity.Handler, hh *households.Handler, cats *categories.Handler, accts *accounts.Handler, ldg *ledger.Handler) http.Handler {
+func newRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, ids *identity.Handler, hh *households.Handler, cats *categories.Handler, accts *accounts.Handler, crds *cards.Handler, ldg *ledger.Handler) http.Handler {
 	r := chi.NewRouter()
 	r.Use(httpx.WithRequestID, accessLog(log), httpx.Recoverer(log))
 
@@ -43,6 +44,7 @@ func newRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, ids *ide
 				hh.ScopedRoutes(r)
 				cats.Routes(r)
 				accts.Routes(r)
+				crds.Routes(r)
 				ldg.Routes(r)
 			})
 		})

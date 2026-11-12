@@ -138,7 +138,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | ID | Tarefa | Dep. | Aceite | Verificar | Status |
 |---|---|---|---|---|---|
 | F4.1 | `cards/domain`: `Split` (RN-010, fuzz) e `cardcycle` (ADR 0003) puros | F0.2 | T06, T13, T14 e toda a tabela do ADR 0003 | `go test ./internal/cards/domain/...` | ✅ (entrega 13; I-48) |
-| F4.2 | Migration `credit_cards` + CRUD (sem PAN/CVV, `last_four` opcional); arquivar sem saldo em aberto | F1.5 | Validação 1..31; outra família → 404 | `make test` |
+| F4.2 | Migration `credit_cards` + CRUD (sem PAN/CVV, `last_four` opcional); arquivar sem saldo em aberto | F1.5 | Validação 1..31; outra família → 404 | `make test` | ✅ (entrega 14; I-49; a regra "arquivar sem saldo em aberto" entra com as faturas na F4.5) |
 | F4.3 | Migration `card_invoices`/`card_installments` (+ ALTER em `transactions`); compra no crédito no `ledger` (find-or-create de faturas, lock, deslocamento se CLOSED) | F4.1, F4.2, F3.1 | T05; INV-02/03; compra retroativa com `allocationShifted` | `make test` |
 | F4.4 | Listar faturas por cartão/período; detalhe (parcelas, ajustes, pagamentos, saldo); fechar (manual, congela base) | F4.3 | INV-15; fechar antes de `closing_on` → 422 | `make test` |
 | F4.5 | Migration `invoice_payments`/`invoice_adjustments`; pagamento parcial/total; ajustes | F4.4, F2.1 | T07, T08, T17; INV-06/07 | `make test` |

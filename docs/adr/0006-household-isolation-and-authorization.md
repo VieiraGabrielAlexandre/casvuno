@@ -1,6 +1,6 @@
 # ADR 0006 — Isolamento por família e autorização
 
-- Status: Proposto, implementado na F1 (2026-11-10); aguardando aceite formal
+- Status: Aceito em 2026-11-12 (aprovado pelo usuário)
 - Data: 2026-11-10
 
 ## Decisão

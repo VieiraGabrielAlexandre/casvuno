@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.10.0
+  version: 0.11.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -18,6 +18,7 @@ tags:
   - name: categories
   - name: accounts
   - name: transfers
+  - name: cards
   - name: transactions
   - name: obligations
   - name: quick-templates
@@ -539,6 +540,92 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
 
+  /api/v1/households/{householdId}/cards:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+    get:
+      tags: [cards]
+      operationId: listCards
+      summary: Cartões de crédito da família (sem paginação, no máximo 50 por família)
+      parameters:
+        - name: includeArchived
+          in: query
+          schema: { type: string, enum: ["true", "false"] }
+      responses:
+        "200":
+          description: Cartões ativos primeiro, por nome
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CardList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [cards]
+      operationId: createCard
+      summary: Cadastrar cartão de crédito
+      description: |
+        Nunca envie o número completo nem o CVV: só os 4 últimos dígitos, opcionais. O titular é um membro ativo da
+        família (422 `HOLDER_NOT_MEMBER`). O limite é informado pelo usuário e o disponível é sempre estimado (RN-018).
+        Limite de cartões: 422 `CARD_LIMIT`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCardRequest" }
+      responses:
+        "201":
+          description: Cartão criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Card" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/cards/{cardId}:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/CardId"
+    get:
+      tags: [cards]
+      operationId: getCard
+      summary: Cartão de crédito
+      responses:
+        "200":
+          description: Cartão
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Card" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [cards]
+      operationId: updateCard
+      summary: Editar, arquivar ou restaurar cartão
+      description: |
+        Campo ausente fica como está; `lastFour: ""` limpa os dígitos. Novos dias de fechamento ou vencimento valem só
+        para faturas ainda não criadas (ADR 0003). Cartão arquivado só aceita `isActive=true` (422 `CARD_ARCHIVED`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCardRequest" }
+      responses:
+        "200":
+          description: Cartão atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Card" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
   /api/v1/households/{householdId}/transactions:
     parameters:
       - $ref: "#/components/parameters/HouseholdId"
@@ -953,6 +1040,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
 
+    CardId:
+      name: cardId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
     AccountId:
       name: accountId
       in: path
@@ -1303,6 +1396,55 @@ components:
         openingBalanceCents: { $ref: "#/components/schemas/Cents" }
         openedOn: { $ref: "#/components/schemas/Date" }
         isActive: { type: boolean, description: "false arquiva (exige saldo zero); true restaura" }
+
+    Card:
+      type: object
+      additionalProperties: false
+      required: [id, name, holderMemberId, lastFour, limitCents, closingDay, dueDay, isActive, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        holderMemberId: { type: string, format: uuid }
+        lastFour: { type: [string, "null"], pattern: "^[0-9]{4}$" }
+        limitCents: { type: integer, minimum: 1, maximum: 1000000000000000, description: Limite informado pelo usuário }
+        closingDay: { type: integer, minimum: 1, maximum: 31 }
+        dueDay: { type: integer, minimum: 1, maximum: 31 }
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CardList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Card" }
+
+    CreateCardRequest:
+      type: object
+      additionalProperties: false
+      required: [name, holderMemberId, limitCents, closingDay, dueDay]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
+        holderMemberId: { type: string, format: uuid }
+        lastFour: { type: string, pattern: "^[0-9]{4}$", description: Só os 4 últimos dígitos (opcional) }
+        limitCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        closingDay: { type: integer, minimum: 1, maximum: 31, description: "Dia de fechamento; vira o último dia em meses curtos" }
+        dueDay: { type: integer, minimum: 1, maximum: 31, description: "Dia de vencimento; sempre depois do fechamento" }
+
+    UpdateCardRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
+        holderMemberId: { type: string, format: uuid }
+        lastFour: { type: string, pattern: "^([0-9]{4})?$", description: '"" limpa os dígitos' }
+        limitCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        closingDay: { type: integer, minimum: 1, maximum: 31 }
+        dueDay: { type: integer, minimum: 1, maximum: 31 }
+        isActive: { type: boolean, description: "false arquiva; true restaura" }
 
     Movement:
       type: object

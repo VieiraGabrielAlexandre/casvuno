@@ -158,7 +158,7 @@ func TestDeactivateMemberPreservesHistoryAndKeepsAnOwner(t *testing.T) {
 // householdRoutes lists every route under /households/{householdId} with a request that
 // exercises it. TestEveryHouseholdRouteIsCoveredByIsolationTests keeps it complete.
 // routeIDs are resource IDs used to build household-scoped paths.
-type routeIDs struct{ member, invite, category, account, transaction, obligation, template string }
+type routeIDs struct{ member, invite, category, account, card, transaction, obligation, template string }
 
 func householdRoutes(ids routeIDs) []struct {
 	method, path string
@@ -186,6 +186,10 @@ func householdRoutes(ids routeIDs) []struct {
 		{http.MethodGet, "/accounts/" + ids.account + "/movements", nil},
 		{http.MethodGet, "/transfers", nil},
 		{http.MethodPost, "/transfers", map[string]any{"fromAccountId": ids.account, "toAccountId": ids.account, "amountCents": 1, "postedOn": "2026-11-10"}},
+		{http.MethodGet, "/cards", nil},
+		{http.MethodPost, "/cards", cardBody(ids.member, map[string]any{"name": "Invasão"})},
+		{http.MethodGet, "/cards/" + ids.card, nil},
+		{http.MethodPatch, "/cards/" + ids.card, map[string]any{"name": "Invadido"}},
 		{http.MethodPost, "/transactions", expenseBody(ids.category, ids.account, 1)},
 		{http.MethodGet, "/transactions", nil},
 		{http.MethodGet, "/transactions/" + ids.transaction, nil},
@@ -215,6 +219,7 @@ func TestHouseholdIsolation(t *testing.T) {
 	txA := ownerA.createTransaction(a.ID, expenseBody(catA.ID, accA.ID, 500))
 	forecastA := ownerA.createForecast(a.ID, forecastBody("EXPENSE", catA.ID, &accA.ID, 700, "2026-11-10", "2026-11-20"))
 	tplA := ownerA.createTemplate(a.ID, templateBody(catA.ID, &accA.ID))
+	cardA := ownerA.createCard(a.ID, cardBody(a.MemberID, nil))
 
 	ownerB, _ := api.registerUser("ownerB")
 	b := ownerB.createHousehold("Casa B")
@@ -222,7 +227,7 @@ func TestHouseholdIsolation(t *testing.T) {
 	catB := ownerB.firstCategory(b.ID, "EXPENSE")
 
 	before := countRows(t, api)
-	for _, rt := range householdRoutes(routeIDs{member: a.MemberID, invite: invA.ID, category: catA.ID, account: accA.ID, transaction: txA.ID, obligation: forecastA.ID, template: tplA.ID}) {
+	for _, rt := range householdRoutes(routeIDs{member: a.MemberID, invite: invA.ID, category: catA.ID, account: accA.ID, card: cardA.ID, transaction: txA.ID, obligation: forecastA.ID, template: tplA.ID}) {
 		path := strings.TrimSuffix("/api/v1/households/"+a.ID+rt.path, "/")
 		r := ownerB.expect(http.StatusNotFound, rt.method, path, rt.body)
 		if r.errorCode(t) != "HOUSEHOLD_NOT_FOUND" {
@@ -237,6 +242,16 @@ func TestHouseholdIsolation(t *testing.T) {
 	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/accounts/"+accA.ID, nil)
 	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/accounts/"+accA.ID+"/movements", nil)
 	ownerB.expect(http.StatusNotFound, http.MethodPatch, "/api/v1/households/"+b.ID+"/accounts/"+accA.ID, map[string]any{"isActive": false})
+	// A's card addressed through B, and A's member as holder of a card in B.
+	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/cards/"+cardA.ID, nil)
+	ownerB.expect(http.StatusNotFound, http.MethodPatch, "/api/v1/households/"+b.ID+"/cards/"+cardA.ID, map[string]any{"isActive": false})
+	if l := ownerB.cards(b.ID, "?includeArchived=true"); len(l) != 0 {
+		t.Fatalf("B lists cards %+v", l)
+	}
+	if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/cards",
+		cardBody(a.MemberID, nil)).errorCode(t); code != "HOLDER_NOT_MEMBER" {
+		t.Fatalf("got %s", code)
+	}
 	// A's accounts used in a transfer inside B: rejected as if they did not exist.
 	for _, body := range []map[string]any{
 		{"fromAccountId": accA.ID, "toAccountId": accB.ID, "amountCents": 100, "postedOn": "2026-11-10"},
@@ -367,7 +382,7 @@ func TestHouseholdIsolation(t *testing.T) {
 func TestEveryHouseholdRouteIsCoveredByIsolationTests(t *testing.T) {
 	api := newTestAPI(t)
 	covered := map[string]bool{}
-	for _, rt := range householdRoutes(routeIDs{"{memberId}", "{inviteId}", "{categoryId}", "{accountId}", "{transactionId}", "{obligationId}", "{templateId}"}) {
+	for _, rt := range householdRoutes(routeIDs{"{memberId}", "{inviteId}", "{categoryId}", "{accountId}", "{cardId}", "{transactionId}", "{obligationId}", "{templateId}"}) {
 		covered[rt.method+" /api/v1/households/{householdId}"+rt.path] = true
 	}
 
@@ -429,7 +444,7 @@ func TestAuditTrail(t *testing.T) {
 func countRows(t *testing.T, api *testAPI) map[string]int64 {
 	t.Helper()
 	out := map[string]int64{}
-	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers", "transactions", "obligations", "obligation_payments", "quick_templates"} {
+	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers", "credit_cards", "transactions", "obligations", "obligation_payments", "quick_templates"} {
 		var n int64
 		if err := api.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -454,6 +469,7 @@ func countRows(t *testing.T, api *testAPI) map[string]int64 {
 		"edited_transactions":   "SELECT count(*) FROM transactions WHERE updated_at <> created_at",
 		"cancelled_obligations": "SELECT count(*) FROM obligations WHERE status = 'CANCELLED'",
 		"edited_templates":      "SELECT count(*) FROM quick_templates WHERE updated_at <> created_at",
+		"edited_cards":          "SELECT count(*) FROM credit_cards WHERE updated_at <> created_at",
 	} {
 		var n int64
 		if err := api.pool.QueryRow(context.Background(), query).Scan(&n); err != nil {
