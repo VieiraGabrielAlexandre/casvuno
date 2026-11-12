@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F4 — Cartões e faturas: F4.1 concluída (domínio puro; entrega 13 ainda não commitada). Próxima: F4.2 (`credit_cards` + CRUD).
+F4 — Cartões e faturas: F4.1 (domínio puro) e F4.2 (cadastro de cartões, API) concluídas; entregas 13 e 14 ainda não commitadas. Próxima: F4.3 (faturas, parcelas e compra no crédito).
 
 ## Concluído
 
@@ -315,16 +315,32 @@ I-04, I-08, I-15 (deslocar compra retroativa para a próxima fatura aberta), I-1
 | `make lint-go` | 1ª: `gofmt` no teste e falso positivo G602 do gosec; corrigidos sem `//nolint` → 0 issues |
 | `make test-go-unit` | ok em todos os pacotes |
 
+### 2026-11-12 — Entrega 14: cadastro de cartões de crédito (F4.2, API)
+- Migration `000011_credit_cards`: nome 1..60 (único entre os ativos, sem diferenciar maiúsculas), titular com FK composta para `household_members`, `last_four` opcional com `CHECK '^[0-9]{4}$'`, `limit_cents` 1..10^15, `closing_day`/`due_day` 1..31, `is_active`; `UNIQUE (household_id, id)` para as FKs compostas das próximas tabelas. Sem PAN, CVV ou dado bancário.
+- Módulo `internal/cards` (`service.go`, `http.go`, `store` gerado pelo sqlc). Fala com `households` só pela interface `cards.MemberChecker`, ligada no Fx.
+- Rotas (README §7.3): `GET/POST /cards` e `GET/PATCH /cards/{cardId}` (`includeArchived=true` na lista). Dias validados com `domain.NewCycle`. Na edição, campo ausente fica como está; `lastFour: ""` limpa; arquivado só aceita restaurar (422 `CARD_ARCHIVED`). Erros: `CARD_NOT_FOUND`, `CARD_NAME_TAKEN` (409), `HOLDER_NOT_MEMBER`, `CARD_LIMIT` (50). Auditoria `credit_card.created/updated/archived/restored` só com os nomes dos campos.
+- OpenAPI 0.11.0 (tag `cards`) e cliente TS regenerado (`make gen`). Ainda sem tela: a F4.7 cuida da web.
+
+## Comandos executados (entrega 14) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `make gen` | 1ª: falhou porque o parâmetro `CardId` não entrou no YAML (substituição não casou); corrigido → sqlc + `schema.d.ts` gerados |
+| `go test -tags integration -run 'Card\|HouseholdIsolation\|EveryHouseholdRoute\|MigrationsUpDownUp'` | ok (5 testes): CRUD, validações (dias 0/32, limite 0/negativo, número completo, letras, `""`, nome vazio, campo `cvv` desconhecido), titular inválido, nome duplicado (criar, editar, restaurar), arquivar/restaurar, membro que saiu não vira titular, auditoria sem dígitos nem limite; limite de 50; isolamento (rotas de A pela família B → 404, cartão de A por B → 404, membro de A como titular em B → 422, nada muda no banco); migrations up/down(10)/up |
+| Testes de controle | tirar `GET /cards/{cardId}` da suíte → `TestEveryHouseholdRouteIsCoveredByIsolationTests` falha; desligar a validação de `lastFour` → o `CHECK` do banco recusa (500) e `TestCardsCRUD` falha; código restaurado |
+| `make lint` | 0 issues (Go, ESLint, Prettier, `tsc`) |
+| `make test` | Go ok (unitários + integração); Vitest 84/84 |
+
 ## Próxima tarefa
-F4.2 — migration `credit_cards` + CRUD (sem PAN/CVV, `last_four` opcional; `closing_day`/`due_day` validados com `domain.NewCycle`); arquivar só sem saldo em aberto.
+F4.3 — migrations `card_invoices`/`card_installments` (+ `credit_card_id` em `transactions`); compra no crédito no `ledger` usando `domain.Split` e `Cycle.Allocate` (find-or-create de faturas, lock, deslocamento se `CLOSED`, `allocationShifted`); cartão arquivado não recebe compra.
 
 ## Pendências reais
+- **Arquivar cartão com fatura em aberto:** hoje sempre permitido, porque ainda não existem faturas. A checagem (saldo de faturas = 0) entra com os pagamentos de fatura (F4.5), assim como o limite disponível estimado (F4.6).
 - **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos a cobrir lá, **da F3.5:** `+` → favorito completo → Lançar em ≤ 3 interações; lançamento pago e previsto (com e sem conta); repetir último; descrição vazia vira a categoria; duplo clique/retentativa sem lançar em dobro; offline sem falso sucesso (T19 parcial); filtros da lista (texto, período, categoria com subcategorias, cancelados); editar lançamento; corrigir (original cancelado, novo lançado, saldo certo); cancelar lançamento e conferir o saldo; pagar previsão parcial e total, vencida, previsão sem conta pedindo a conta; editar e cancelar previsão; criar/editar/excluir favorito; favorito invisível para outro membro. **Das fases anteriores:** categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
 - **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
 - **Sem limpeza de sessões, convites e chaves de idempotência expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).
 - **Página de convite** não mostra o nome da família antes do aceite (não há rota pública de pré-visualização, de propósito, para não expor dados a quem só tem o link).
-- **Decisões de produto:** I-04, I-08, I-15 (deslocar compra retroativa), I-18 e I-19 aprovados em 2026-11-11 (ADRs 0002, 0003 e 0010 aceitos); nenhum item [APROVAR] pendente. ADRs 0004, 0006, 0007, 0008, 0011 e 0012 continuam "Proposto"; o 0006 já está implementado e aguarda aceite formal.
+- **Decisões de produto:** I-04, I-08, I-15, I-18 e I-19 aprovados em 2026-11-11. **Em 2026-11-12 o usuário aprovou todos os demais itens de `spec-review.md` (I-02 a I-49) e aceitou os ADRs 0004, 0006, 0007, 0008, 0011 e 0012**: todos os ADRs estão aceitos e não há item pendente de aprovação.
 - **Web fora do Compose em dev** (decisão registrada no plano/ADR 0009). O web no Compose entra com o Caddy em F8.2.
 - **`apps/web/AGENTS.md`** é gerado e reinserido pelo `next dev`; mantido versionado.
 - O pnpm 12 marcou `sharp` e `unrs-resolver` como build não permitido (`allowBuilds: false`). O build e o lint funcionam sem eles; reavaliar se o ESLint import resolver precisar.

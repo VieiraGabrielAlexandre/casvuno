@@ -83,3 +83,11 @@ sql:
       go:
         <<: *go
         out: internal/ledger/store
+
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/cards.sql
+    gen:
+      go:
+        <<: *go
+        out: internal/cards/store

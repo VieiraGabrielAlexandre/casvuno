@@ -365,6 +365,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/households/{householdId}/cards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        /** Cartões de crédito da família (sem paginação, no máximo 50 por família) */
+        get: operations["listCards"];
+        put?: never;
+        /**
+         * Cadastrar cartão de crédito
+         * @description Nunca envie o número completo nem o CVV: só os 4 últimos dígitos, opcionais. O titular é um membro ativo da
+         *     família (422 `HOLDER_NOT_MEMBER`). O limite é informado pelo usuário e o disponível é sempre estimado (RN-018).
+         *     Limite de cartões: 422 `CARD_LIMIT`.
+         */
+        post: operations["createCard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/cards/{cardId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                cardId: components["parameters"]["CardId"];
+            };
+            cookie?: never;
+        };
+        /** Cartão de crédito */
+        get: operations["getCard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Editar, arquivar ou restaurar cartão
+         * @description Campo ausente fica como está; `lastFour: ""` limpa os dígitos. Novos dias de fechamento ou vencimento valem só
+         *     para faturas ainda não criadas (ADR 0003). Cartão arquivado só aceita `isActive=true` (422 `CARD_ARCHIVED`).
+         */
+        patch: operations["updateCard"];
+        trace?: never;
+    };
     "/api/v1/households/{householdId}/transactions": {
         parameters: {
             query?: never;
@@ -820,6 +870,50 @@ export interface components {
             /** @description false arquiva (exige saldo zero); true restaura */
             isActive?: boolean;
         };
+        Card: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            holderMemberId: string;
+            lastFour: string | null;
+            /** @description Limite informado pelo usuário */
+            limitCents: number;
+            closingDay: number;
+            dueDay: number;
+            isActive: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        CardList: {
+            items: components["schemas"]["Card"][];
+        };
+        CreateCardRequest: {
+            name: string;
+            /** Format: uuid */
+            holderMemberId: string;
+            /** @description Só os 4 últimos dígitos (opcional) */
+            lastFour?: string;
+            limitCents: number;
+            /** @description Dia de fechamento; vira o último dia em meses curtos */
+            closingDay: number;
+            /** @description Dia de vencimento; sempre depois do fechamento */
+            dueDay: number;
+        };
+        UpdateCardRequest: {
+            name?: string;
+            /** Format: uuid */
+            holderMemberId?: string;
+            /** @description "" limpa os dígitos */
+            lastFour?: string;
+            limitCents?: number;
+            closingDay?: number;
+            dueDay?: number;
+            /** @description false arquiva; true restaura */
+            isActive?: boolean;
+        };
         Movement: {
             /** Format: uuid */
             id: string;
@@ -1131,6 +1225,7 @@ export interface components {
         ObligationId: string;
         TemplateId: string;
         TransactionId: string;
+        CardId: string;
         AccountId: string;
         /** @description Itens por página (padrão 25). */
         Limit: number;
@@ -1865,6 +1960,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Transfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listCards: {
+        parameters: {
+            query?: {
+                includeArchived?: "true" | "false";
+            };
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cartões ativos primeiro, por nome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createCard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCardRequest"];
+            };
+        };
+        responses: {
+            /** @description Cartão criado */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Card"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getCard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                cardId: components["parameters"]["CardId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cartão */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Card"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateCard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                cardId: components["parameters"]["CardId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCardRequest"];
+            };
+        };
+        responses: {
+            /** @description Cartão atualizado */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Card"];
                 };
             };
             400: components["responses"]["Error"];

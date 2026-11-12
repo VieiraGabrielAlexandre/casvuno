@@ -1,6 +1,6 @@
 # ADR 0004 — Dinheiro, datas, fuso e formatos de exportação
 
-- Status: Proposto
+- Status: Aceito em 2026-11-12 (aprovado pelo usuário)
 - Data: 2026-11-10
 
 ## Decisão

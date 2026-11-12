@@ -1,6 +1,6 @@
 # ADR 0012 — Observabilidade, auditoria e operação
 
-- Status: Proposto
+- Status: Aceito em 2026-11-12 (aprovado pelo usuário)
 - Data: 2026-11-10
 
 ## Decisão

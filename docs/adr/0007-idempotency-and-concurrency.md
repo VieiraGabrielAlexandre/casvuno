@@ -1,6 +1,6 @@
 # ADR 0007 — Idempotência e concorrência
 
-- Status: Proposto; mecânica de idempotência implementada na F2.1 (2026-11-10)
+- Status: Aceito em 2026-11-12 (aprovado pelo usuário)
 - Data: 2026-11-10
 
 ## Decisão

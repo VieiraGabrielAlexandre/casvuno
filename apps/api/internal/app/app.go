@@ -16,6 +16,7 @@ import (
 	"go.uber.org/fx/fxevent"
 
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/accounts"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/cards"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/categories"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/households"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/identity"
@@ -46,6 +47,7 @@ var Module = fx.Options(
 	householdsModule,
 	categoriesModule,
 	accountsModule,
+	cardsModule,
 	ledgerModule,
 	fx.Invoke(func(*http.Server) {}), // the server is the root of the object graph
 )
@@ -56,6 +58,15 @@ var accountsModule = fx.Module("accounts",
 		accounts.NewHandler,
 		// households implements the consumer-defined accounts.MemberChecker.
 		func(s *households.Service) accounts.MemberChecker { return s },
+	),
+)
+
+var cardsModule = fx.Module("cards",
+	fx.Provide(
+		cards.NewService,
+		cards.NewHandler,
+		// households implements the consumer-defined cards.MemberChecker.
+		func(s *households.Service) cards.MemberChecker { return s },
 	),
 )
 

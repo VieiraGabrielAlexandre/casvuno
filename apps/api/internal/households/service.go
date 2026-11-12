@@ -472,7 +472,7 @@ func invalidTimezone() error {
 }
 
 // IsActiveMember reports whether memberID is an active member of householdID. It implements
-// accounts.MemberChecker (owner of INDIVIDUAL accounts).
+// accounts.MemberChecker (owner of INDIVIDUAL accounts) and cards.MemberChecker (card holder).
 func (s *Service) IsActiveMember(ctx context.Context, householdID, memberID uuid.UUID) (bool, error) {
 	ok, err := store.New(s.tx.Conn(ctx)).IsActiveMember(ctx, store.IsActiveMemberParams{
 		HouseholdID: householdID, MemberID: memberID,
