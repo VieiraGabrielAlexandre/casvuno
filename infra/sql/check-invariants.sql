@@ -74,4 +74,34 @@ UNION ALL
 SELECT 'INV-13', o.id::text, 'planned obligation with payments'
 FROM obligations o
 WHERE o.status = 'PLANNED'
-  AND EXISTS (SELECT 1 FROM obligation_payments p WHERE p.household_id = o.household_id AND p.obligation_id = o.id);
+  AND EXISTS (SELECT 1 FROM obligation_payments p WHERE p.household_id = o.household_id AND p.obligation_id = o.id)
+
+UNION ALL
+
+-- INV-19: a voided transaction has its obligation cancelled (and a cancelled obligation that
+-- was confirmed belongs to a voided transaction).
+SELECT 'INV-19', t.id::text, 'voided transaction and cancelled obligation out of step'
+FROM transactions t
+JOIN obligations o ON o.household_id = t.household_id AND o.transaction_id = t.id
+WHERE (t.status = 'VOIDED') <> (o.status = 'CANCELLED')
+
+UNION ALL
+
+-- INV-19: every payment of a cancelled obligation has its movement reversed.
+SELECT 'INV-19', p.id::text, 'payment of a cancelled obligation not reversed'
+FROM obligation_payments p
+JOIN obligations o ON o.household_id = p.household_id AND o.id = p.obligation_id
+WHERE o.status = 'CANCELLED'
+  AND NOT EXISTS (SELECT 1 FROM account_movements r
+                  WHERE r.household_id = p.household_id AND r.reversal_of_id = p.account_movement_id)
+
+UNION ALL
+
+-- INV-19 (converse): a direct payment or receipt is reversed only by cancelling its obligation.
+SELECT 'INV-19', r.id::text, 'reversal of a movement whose obligation is not cancelled'
+FROM account_movements r
+JOIN account_movements m ON m.household_id = r.household_id AND m.id = r.reversal_of_id
+WHERE m.kind IN ('DIRECT_PAYMENT', 'DIRECT_RECEIPT')
+  AND NOT EXISTS (SELECT 1 FROM obligation_payments p
+                  JOIN obligations o ON o.household_id = p.household_id AND o.id = p.obligation_id
+                  WHERE p.household_id = m.household_id AND p.account_movement_id = m.id AND o.status = 'CANCELLED');

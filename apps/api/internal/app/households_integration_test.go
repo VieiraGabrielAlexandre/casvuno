@@ -186,11 +186,15 @@ func householdRoutes(ids routeIDs) []struct {
 		{http.MethodGet, "/transfers", nil},
 		{http.MethodPost, "/transfers", map[string]any{"fromAccountId": ids.account, "toAccountId": ids.account, "amountCents": 1, "postedOn": "2026-11-10"}},
 		{http.MethodPost, "/transactions", expenseBody(ids.category, ids.account, 1)},
+		{http.MethodGet, "/transactions", nil},
 		{http.MethodGet, "/transactions/" + ids.transaction, nil},
+		{http.MethodPatch, "/transactions/" + ids.transaction, map[string]any{"description": "Invadida"}},
+		{http.MethodPost, "/transactions/" + ids.transaction + "/void", nil},
 		{http.MethodGet, "/obligations", nil},
 		{http.MethodGet, "/obligations/" + ids.obligation, nil},
 		{http.MethodPatch, "/obligations/" + ids.obligation, map[string]any{"amountCents": 1}},
 		{http.MethodPost, "/obligations/" + ids.obligation + "/payments", map[string]any{"amountCents": 1, "paidOn": "2026-11-10"}},
+		{http.MethodPost, "/obligations/" + ids.obligation + "/cancel", nil},
 	}
 }
 
@@ -240,6 +244,9 @@ func TestHouseholdIsolation(t *testing.T) {
 	// A's transaction read through B, and A's category, account or member used in an entry in B:
 	// rejected as if they did not exist (T15, RN-021).
 	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/transactions/"+txA.ID, nil)
+	ownerB.expect(http.StatusNotFound, http.MethodPatch, "/api/v1/households/"+b.ID+"/transactions/"+txA.ID, map[string]any{"description": "x"})
+	ownerB.expect(http.StatusNotFound, http.MethodPost, "/api/v1/households/"+b.ID+"/transactions/"+txA.ID+"/void", nil,
+		"Idempotency-Key", uuid.NewString())
 	personal := expenseBody(catB.ID, accB.ID, 100)
 	personal["scope"], personal["personMemberId"] = "PERSONAL", a.MemberID
 	for _, tc := range []struct {
@@ -260,18 +267,42 @@ func TestHouseholdIsolation(t *testing.T) {
 	ownerB.expect(http.StatusNotFound, http.MethodPatch, "/api/v1/households/"+b.ID+"/obligations/"+forecastA.ID, map[string]any{"amountCents": 1})
 	ownerB.expect(http.StatusNotFound, http.MethodPost, "/api/v1/households/"+b.ID+"/obligations/"+forecastA.ID+"/payments",
 		map[string]any{"amountCents": 1, "paidOn": "2026-11-10"}, "Idempotency-Key", uuid.NewString())
+	ownerB.expect(http.StatusNotFound, http.MethodPost, "/api/v1/households/"+b.ID+"/obligations/"+forecastA.ID+"/cancel", nil)
+	// Filtering B's transactions by A's IDs finds nothing (and never A's rows).
+	for _, filter := range []string{"categoryId=" + catA.ID, "accountId=" + accA.ID, "personMemberId=" + a.MemberID, "status=ALL"} {
+		var page struct{ Items []transactionDTO }
+		ownerB.expect(http.StatusOK, http.MethodGet, "/api/v1/households/"+b.ID+"/transactions?"+filter, nil).decode(t, &page)
+		if len(page.Items) != 0 {
+			t.Fatalf("B's transactions filtered by %s: %+v", filter, page.Items)
+		}
+	}
 	if after := countRows(t, api); !maps.Equal(before, after) {
 		t.Fatalf("cross-household requests changed data: before %v after %v", before, after)
 	}
 	forecastB := ownerB.createForecast(b.ID, forecastBody("EXPENSE", catB.ID, nil, 300, "2026-11-10", "2026-11-20"))
-	before = countRows(t, api) // B's own forecast is a legitimate write
+	txB := ownerB.createTransaction(b.ID, expenseBody(catB.ID, accB.ID, 200))
+	before = countRows(t, api) // B's own forecast and entry are legitimate writes
+	// A's category or member moved into B's entry: rejected as if they did not exist.
+	for _, tc := range []struct {
+		body map[string]any
+		code string
+	}{
+		{map[string]any{"categoryId": catA.ID}, "CATEGORY_NOT_FOUND"},
+		{map[string]any{"scope": "PERSONAL", "personMemberId": a.MemberID}, "PERSON_NOT_MEMBER"},
+	} {
+		if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPatch, "/api/v1/households/"+b.ID+"/transactions/"+txB.ID,
+			tc.body).errorCode(t); code != tc.code {
+			t.Fatalf("got %s, want %s", code, tc.code)
+		}
+	}
 	if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/obligations/"+forecastB.ID+"/payments",
 		map[string]any{"amountCents": 300, "paidOn": "2026-11-10", "accountId": accA.ID}, "Idempotency-Key", uuid.NewString()).errorCode(t); code != "ACCOUNT_NOT_FOUND" {
 		t.Fatalf("got %s", code)
 	}
 	var listB struct{ Items []obligationDTO }
 	ownerB.expect(http.StatusOK, http.MethodGet, "/api/v1/households/"+b.ID+"/obligations?view=all", nil).decode(t, &listB)
-	if len(listB.Items) != 1 || listB.Items[0].ID != forecastB.ID {
+	if len(listB.Items) != 2 || !slices.ContainsFunc(listB.Items, func(o obligationDTO) bool { return o.ID == forecastB.ID }) ||
+		slices.ContainsFunc(listB.Items, func(o obligationDTO) bool { return o.ID == forecastA.ID }) {
 		t.Fatalf("B lists %+v", listB.Items)
 	}
 	// A's member as owner of an account in B: rejected as if it did not exist (field ownerMemberId).
@@ -387,5 +418,17 @@ func countRows(t *testing.T, api *testAPI) map[string]int64 {
 		t.Fatal(err)
 	}
 	out["archived_categories"] = archived
+	// State changes that keep the row count: voids, cancellations and edits.
+	for name, query := range map[string]string{
+		"voided_transactions":   "SELECT count(*) FROM transactions WHERE status = 'VOIDED'",
+		"edited_transactions":   "SELECT count(*) FROM transactions WHERE updated_at <> created_at",
+		"cancelled_obligations": "SELECT count(*) FROM obligations WHERE status = 'CANCELLED'",
+	} {
+		var n int64
+		if err := api.pool.QueryRow(context.Background(), query).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		out[name] = n
+	}
 	return out
 }

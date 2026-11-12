@@ -22,6 +22,7 @@ type transactionDTO struct {
 	CreatedByMemberID string  `json:"createdByMemberId"`
 	Description       string  `json:"description"`
 	Merchant          *string `json:"merchant"`
+	Notes             *string `json:"notes"`
 	AmountCents       int64   `json:"amountCents"`
 	CategoryID        string  `json:"categoryId"`
 	OccurredOn        string  `json:"occurredOn"`

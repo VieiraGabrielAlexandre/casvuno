@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.8.0
+  version: 0.9.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -541,6 +541,59 @@ paths:
   /api/v1/households/{householdId}/transactions:
     parameters:
       - $ref: "#/components/parameters/HouseholdId"
+    get:
+      tags: [transactions]
+      operationId: listTransactions
+      summary: Lançamentos (mais recentes primeiro; paginação por cursor)
+      description: |
+        Consumo e receitas (transações). Ordem estável por `occurredOn` e `id`, decrescente. Todos os filtros são
+        opcionais e se combinam. `categoryId` inclui as subcategorias. `q` busca, sem diferenciar maiúsculas, na
+        descrição, no estabelecimento e nas observações. `status` padrão = `ACTIVE` (cancelados ficam de fora).
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, VOIDED, ALL] }
+        - name: kind
+          in: query
+          schema: { $ref: "#/components/schemas/TransactionKind" }
+        - name: from
+          in: query
+          description: Data a partir de (inclusive)
+          schema: { $ref: "#/components/schemas/Date" }
+        - name: to
+          in: query
+          description: Data até (inclusive)
+          schema: { $ref: "#/components/schemas/Date" }
+        - name: categoryId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: accountId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: personMemberId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: scope
+          in: query
+          schema: { $ref: "#/components/schemas/Scope" }
+        - name: paymentMethod
+          in: query
+          schema: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        - name: q
+          in: query
+          description: Texto (até 100 caracteres)
+          schema: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Página de lançamentos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransactionPage" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
     post:
       tags: [transactions]
       operationId: createTransaction
@@ -590,6 +643,60 @@ paths:
               schema: { $ref: "#/components/schemas/Transaction" }
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [transactions]
+      operationId: updateTransaction
+      summary: Editar campos não estruturais de um lançamento ativo
+      description: |
+        Só descrição, estabelecimento, observações, categoria (ativa, do mesmo tipo), escopo e pessoa (membro ativo).
+        Campo ausente fica como está; `""` limpa `merchant`, `notes` e `personMemberId`. Valor, data, meio e conta mudam
+        cancelando (`/void`) e lançando de novo. Lançamento cancelado → 422 `TRANSACTION_VOIDED`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateTransactionRequest" }
+      responses:
+        "200":
+          description: Lançamento atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/transactions/{transactionId}/void:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/TransactionId"
+    post:
+      tags: [transactions]
+      operationId: voidTransaction
+      summary: Cancelar um lançamento (estorna o caixa)
+      description: |
+        A transação vira `VOIDED`, sua obrigação `CANCELLED`, e cada pagamento ganha um movimento de estorno
+        (`REVERSAL`, direção oposta, mesma conta e valor) datado de hoje no fuso da família (ou da data do pagamento,
+        se posterior). Os pagamentos ficam no histórico. Sai do consumo e dos compromissos; o dinheiro volta.
+        Cancelar de novo não muda nada. Conta arquivada envolvida → 422 `ACCOUNT_ARCHIVED` (restaure-a antes).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Lançamento cancelado (ou repetido com a mesma Idempotency-Key)
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
 
   /api/v1/households/{householdId}/obligations:
     parameters:
@@ -661,6 +768,28 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ObligationDetail" }
         "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/obligations/{obligationId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/ObligationId"
+    post:
+      tags: [obligations]
+      operationId: cancelObligation
+      summary: Cancelar uma previsão ainda não paga
+      description: |
+        `PLANNED` → `CANCELLED`: sai dos compromissos; nada mais muda. Já cancelada → 200 sem mudança. Com pagamento
+        (`CONFIRMED`) → 422 `OBLIGATION_NOT_PLANNED`: cancele o lançamento (`/transactions/{id}/void`).
+      responses:
+        "200":
+          description: Previsão cancelada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObligationDetail" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
@@ -1185,6 +1314,29 @@ components:
         status: { type: string, enum: [ACTIVE, VOIDED] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+
+    TransactionPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Transaction" }
+        nextCursor: { type: [string, "null"] }
+
+    UpdateTransactionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        description: { type: string, minLength: 1, maxLength: 200 }
+        merchant: { type: string, maxLength: 120, description: '"" limpa' }
+        notes: { type: string, maxLength: 1000, description: '"" limpa' }
+        categoryId: { type: string, format: uuid, description: Categoria ativa do mesmo tipo }
+        scope: { $ref: "#/components/schemas/Scope" }
+        personMemberId:
+          type: string
+          description: Membro ativo (UUID); "" limpa (só com scope FAMILY)
 
     TransactionPayment:
       type: object

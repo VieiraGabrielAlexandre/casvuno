@@ -77,3 +77,61 @@ WHERE household_id = @household_id AND id = @id AND status = 'PLANNED';
 UPDATE obligations
 SET amount_cents = @amount_cents, due_on = @due_on, description = @description, updated_at = now()
 WHERE household_id = @household_id AND id = @id AND status = 'PLANNED';
+
+-- Transactions newest first, keyset-paginated on (occurred_on, id) (RN-025). Filters are
+-- optional; category_id also matches its subcategories; text searches description, merchant
+-- and notes (case-insensitive substring); status NULL means any status.
+-- name: ListTransactions :many
+SELECT t.id, t.kind, t.scope, t.person_member_id, t.created_by_member_id, t.description, t.merchant, t.notes,
+       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.status, t.created_at,
+       t.updated_at
+FROM transactions t
+WHERE t.household_id = @household_id
+  AND (sqlc.narg(status)::text IS NULL OR t.status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR t.kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(from_date)::date IS NULL OR t.occurred_on >= sqlc.narg(from_date)::date)
+  AND (sqlc.narg(to_date)::date IS NULL OR t.occurred_on <= sqlc.narg(to_date)::date)
+  AND (sqlc.narg(category_id)::uuid IS NULL
+       OR t.category_id = sqlc.narg(category_id)::uuid
+       OR t.category_id IN (SELECT c.id FROM categories c
+                            WHERE c.household_id = t.household_id AND c.parent_id = sqlc.narg(category_id)::uuid))
+  AND (sqlc.narg(account_id)::uuid IS NULL OR t.account_id = sqlc.narg(account_id)::uuid)
+  AND (sqlc.narg(person_member_id)::uuid IS NULL OR t.person_member_id = sqlc.narg(person_member_id)::uuid)
+  AND (sqlc.narg(scope)::text IS NULL OR t.scope = sqlc.narg(scope)::text)
+  AND (sqlc.narg(payment_method)::text IS NULL OR t.payment_method = sqlc.narg(payment_method)::text)
+  AND (sqlc.narg(text)::text IS NULL
+       OR strpos(lower(t.description || ' ' || COALESCE(t.merchant, '') || ' ' || COALESCE(t.notes, '')),
+                 lower(sqlc.narg(text)::text)) > 0)
+  AND (sqlc.narg(after_occurred_on)::date IS NULL
+       OR (t.occurred_on, t.id) < (sqlc.narg(after_occurred_on)::date, sqlc.narg(after_id)::uuid))
+ORDER BY t.occurred_on DESC, t.id DESC
+LIMIT @row_limit;
+
+-- Serialises edits and the void of one transaction (ADR 0007).
+-- name: LockTransaction :one
+SELECT id FROM transactions WHERE household_id = @household_id AND id = @id FOR UPDATE;
+
+-- name: GetObligationIDByTransaction :one
+SELECT id FROM obligations WHERE household_id = @household_id AND transaction_id = @transaction_id;
+
+-- Non-structural fields only (I-18): amount, date, method and account change by void + new entry.
+-- name: UpdateTransaction :exec
+UPDATE transactions
+SET description = @description, merchant = sqlc.narg(merchant), notes = sqlc.narg(notes), category_id = @category_id,
+    scope = @scope, person_member_id = sqlc.narg(person_member_id), updated_at = now()
+WHERE household_id = @household_id AND id = @id AND status = 'ACTIVE';
+
+-- Keeps the confirmed obligation's copy of the classification in step with its transaction.
+-- name: UpdateObligationClassification :exec
+UPDATE obligations
+SET description = @description, category_id = @category_id, scope = @scope,
+    person_member_id = sqlc.narg(person_member_id), updated_at = now()
+WHERE household_id = @household_id AND id = @id;
+
+-- name: VoidTransaction :exec
+UPDATE transactions SET status = 'VOIDED', updated_at = now()
+WHERE household_id = @household_id AND id = @id AND status = 'ACTIVE';
+
+-- name: CancelObligation :exec
+UPDATE obligations SET status = 'CANCELLED', updated_at = now()
+WHERE household_id = @household_id AND id = @id AND status <> 'CANCELLED';

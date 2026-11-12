@@ -30,7 +30,7 @@
 - pagamento de fatura: `SELECT … FROM card_invoices WHERE id=$ AND household_id=$ FOR UPDATE`, depois soma e verifica o teto;
 - pagamento de obrigação e confirmação (F3.2): `FOR UPDATE` na obrigação, releitura do total pago sob o lock, depois a conta (via movimento) antes de inserir transação e pagamento. Teto: 422 `AMOUNT_EXCEEDS_OUTSTANDING`/`OBLIGATION_ALREADY_PAID`. Testado com 10 pagamentos simultâneos do valor total: exatamente um aceito e uma transação só;
 - inserção de parcela e fechamento: `FOR UPDATE` na fatura;
-- void: `FOR UPDATE` na transação;
+- void (F3.3): `FOR UPDATE` na transação, depois na obrigação, depois nas contas dos pagamentos **em ordem de ID** (a mesma das transferências), antes de inserir os estornos. Transação já `VOIDED` → 200 sem novas linhas. Testado com 10 voids simultâneos: um estorno só;
 - transferência (F2.3): `FOR UPDATE` nas duas contas **em ordem fixa de ID** (evita deadlock entre transferências em sentidos opostos) e exige contas ativas (evita a corrida com o arquivamento); sem verificação de saldo (ADR 0002); as duas pernas na mesma transação SQL. Testado com 20 transferências simultâneas em sentidos opostos;
 - lançamento imediato (F3.1): `FOR SHARE` na categoria (impede arquivar no meio do lançamento sem serializar lançamentos) e depois `FOR UPDATE` na conta, **antes** de inserir as linhas que a referenciam. Inserir antes e travar depois causava deadlock entre lançamentos concorrentes: a FK pega `KEY SHARE` na conta e o `FOR UPDATE` posterior vira um *lock upgrade*. Testado com 20 lançamentos simultâneos na mesma conta;
 - jobs do worker: `pg_try_advisory_xact_lock(job_id)` + `ON CONFLICT DO NOTHING`.

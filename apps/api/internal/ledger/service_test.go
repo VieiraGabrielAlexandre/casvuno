@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -126,5 +127,18 @@ func TestObligationKindMirrorsTheEntry(t *testing.T) {
 	}
 	if transactionKind("PAYABLE") != KindExpense || transactionKind("RECEIVABLE") != KindIncome {
 		t.Fatal("a confirmed forecast keeps its kind")
+	}
+}
+
+// The reversal is named after the entry and always fits the movement description limit,
+// cutting by characters (never in the middle of a multi-byte rune).
+func TestReversalDescription(t *testing.T) {
+	if got := reversalDescription("Café"); got != "Estorno: Café" {
+		t.Fatalf("got %q", got)
+	}
+	long := strings.Repeat("é", maxDescriptionLen)
+	got := reversalDescription(long)
+	if n := utf8.RuneCountInString(got); n != maxDescriptionLen || !utf8.ValidString(got) || !strings.HasPrefix(got, "Estorno: ") {
+		t.Fatalf("len %d, valid %v: %q", n, utf8.ValidString(got), got)
 	}
 }
