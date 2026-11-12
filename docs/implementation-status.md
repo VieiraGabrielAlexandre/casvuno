@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F3 — Lançamentos: **F3.1, F3.2 e F3.3 concluídas** (entregas 8–10, API; F3.1/F3.2 mescladas no PR #9, F3.3 ainda não commitada). Próxima: F3.4 (favoritos e "repetir último").
+F3 — Lançamentos: **F3.1–F3.4 concluídas** (entregas 8–11, API; F3.4 ainda não commitada). Próxima: F3.5 (telas de lançamento rápido, favoritos, lista com filtros, pendências e "Corrigir").
 
 ## Concluído
 
@@ -242,11 +242,37 @@ I-04, I-08, I-15 (deslocar compra retroativa para a próxima fatura aberta), I-1
 | `go mod tidy -diff` / `make gen` | limpo / idempotente |
 | Stack real: `make up`, curl, `make check-invariants` | gasto de R$ 12,50 (saldo 98750); PATCH de descrição/estabelecimento; busca `q=PÃO` encontra "Pão Quente"; void → `VOIDED`, replay com `Idempotent-Replayed: true`, outra chave → 200; saldo 100000; extrato `REVERSAL IN 1250` em 2026-11-11 + `DIRECT_PAYMENT OUT`; lista padrão 0 / `ALL` 1; previsão cancelada (`outstandingCents` 0), 0 em aberto; nenhuma violação |
 
+### 2026-11-11 — Entrega 11: favoritos e "repetir último" (F3.4, API)
+- **Migration `000010_quick_templates`:**
+  - favorito por membro (`member_id`, FK composta) com `kind` + categoria do mesmo tipo (FK composta), `payment_method`, `account_id`/`default_amount_cents` opcionais, `sort_order` e CHECK de pessoa em PERSONAL (I-43);
+  - também cria um índice de `transactions` por autor, usado pelo "repetir último".
+- **Rotas `/quick-templates`:**
+  - `GET` lista só os do membro, por `sortOrder` e nome;
+  - `POST` valida categoria ativa do mesmo tipo, conta ativa e pessoa membro ativo; por padrão entra depois do último; limite de 50 por membro, garantido sob concorrência por lock consultivo;
+  - `PATCH`: ausente mantém, `""` limpa pessoa/conta e `defaultAmountCents: 0` limpa o valor; o tipo não muda; só o que muda é validado;
+  - `DELETE` → 204;
+  - auditoria `quick_template.created/updated/deleted`.
+- **Privacidade (I-46):** favorito de outro membro da mesma família → 404 `TEMPLATE_NOT_FOUND`; de outra família → 404 `HOUSEHOLD_NOT_FOUND`.
+- **Repetir último:** `GET /transactions` ganhou `createdBy=me|<memberId>`; `createdBy=me&limit=1` devolve o lançamento ativo mais recente de quem chama.
+- **Docs:** OpenAPI 0.10.0 (tag `quick-templates`), plano (F3.4 ✅), `spec-review` (I-46), `domain-model`.
+
+## Comandos executados (entrega 11) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `make gen` | 1ª: o sqlc recusou a query do lock consultivo (`@member_id::uuid::text`); trocada por uma chave em texto. 2ª e 3ª: o OpenAPI não carregou (`: ` e `"` sem aspas em descrições); corrigido. 4ª: ok |
+| `go test -tags integration ./internal/app/` | 1ª: todos os testes falharam ao carregar o OpenAPI (uma vírgula numa descrição virou campo extra no schema); corrigido. 2ª: ok |
+| Testes novos de integração | **Ciclo:** criar (ordem automática e explícita), listar em ordem, lançar a partir do favorito completo, editar e limpar campos, no-op sem auditoria, favorito com categoria arquivada continua editável, excluir (204 e depois 404), lançamento feito com ele intacto, auditoria. **Privacidade:** outro membro não vê, não edita e não exclui (404 sem gravar); cada membro tem sua lista. **Validação:** 15 criações e 8 edições inválidas sem gravar (`kind`, nome, valor, escopo, meio cartão, ordem, campo desconhecido, categoria de outro tipo/arquivada, conta arquivada/inexistente, pessoa inválida). **Limite:** com 46, 8 criações simultâneas → 4 aceitas, total 50, a seguinte → `TEMPLATE_LIMIT`. **Repetir último:** vazio sem lançamentos; devolve o próprio (ignora o do outro membro e o cancelado); filtro por autor; `createdBy=you` → 400. **Isolamento:** 4 rotas novas; editar/excluir favorito de A por B → 404; categoria, conta e pessoa de A em favorito de B → 422; "repetir último" de B sem lançamentos de A. `TestMigrationsUpDownUp` com 10 migrations |
+| `go test ./internal/ledger/` | ok (edição e limpeza de campos, campos alterados, 7 regras inválidas) |
+| `make lint` | 0 issues; ESLint, Prettier e `tsc` ok |
+| `make test` | 9 pacotes Go ok; Vitest 63/63 |
+| `go mod tidy -diff` / `make gen` | limpo / idempotente |
+| Stack real: `make up`, `migrate-down`/`migrate-up`, curl, `make check-invariants` | versão 10, dirty = false; favorito "Café" R$ 12,50 criado e listado; lançamento com os campos dele; `createdBy=me&limit=1` → o café; edição limpa o valor; DELETE 204 e lista vazia; nenhuma violação |
+
 ## Próxima tarefa
-F3.4 — migration `quick_templates`; CRUD de favoritos; "repetir último" (`GET /transactions?createdBy=me&limit=1`).
+F3.5 — web: lançamento rápido (botão `+`, valor em destaque, hoje por padrão, imediato/previsto), favoritos (usar e gerenciar), "repetir último", lista de transações com filtros, pendências com pagamento e cancelamento de previsão, "Corrigir" (void + novo).
 
 ## Pendências reais
-- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). F3.1–F3.3 não têm tela (lançamento rápido, lista com filtros, pendências e "Corrigir" são a F3.5). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
+- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). F3.1–F3.4 não têm tela (lançamento rápido, favoritos, lista com filtros, pendências e "Corrigir" são a F3.5). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
 - **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
 - **Sem limpeza de sessões, convites e chaves de idempotência expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).

@@ -6,6 +6,7 @@ import (
 	"context"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -157,7 +158,7 @@ func TestDeactivateMemberPreservesHistoryAndKeepsAnOwner(t *testing.T) {
 // householdRoutes lists every route under /households/{householdId} with a request that
 // exercises it. TestEveryHouseholdRouteIsCoveredByIsolationTests keeps it complete.
 // routeIDs are resource IDs used to build household-scoped paths.
-type routeIDs struct{ member, invite, category, account, transaction, obligation string }
+type routeIDs struct{ member, invite, category, account, transaction, obligation, template string }
 
 func householdRoutes(ids routeIDs) []struct {
 	method, path string
@@ -195,6 +196,10 @@ func householdRoutes(ids routeIDs) []struct {
 		{http.MethodPatch, "/obligations/" + ids.obligation, map[string]any{"amountCents": 1}},
 		{http.MethodPost, "/obligations/" + ids.obligation + "/payments", map[string]any{"amountCents": 1, "paidOn": "2026-11-10"}},
 		{http.MethodPost, "/obligations/" + ids.obligation + "/cancel", nil},
+		{http.MethodGet, "/quick-templates", nil},
+		{http.MethodPost, "/quick-templates", templateBody(ids.category, nil)},
+		{http.MethodPatch, "/quick-templates/" + ids.template, map[string]any{"label": "Invadido"}},
+		{http.MethodDelete, "/quick-templates/" + ids.template, nil},
 	}
 }
 
@@ -209,6 +214,7 @@ func TestHouseholdIsolation(t *testing.T) {
 	accA := ownerA.createAccount(a.ID, map[string]any{"name": "Conta A", "ownership": "JOINT", "openingBalanceCents": 1000})
 	txA := ownerA.createTransaction(a.ID, expenseBody(catA.ID, accA.ID, 500))
 	forecastA := ownerA.createForecast(a.ID, forecastBody("EXPENSE", catA.ID, &accA.ID, 700, "2026-11-10", "2026-11-20"))
+	tplA := ownerA.createTemplate(a.ID, templateBody(catA.ID, &accA.ID))
 
 	ownerB, _ := api.registerUser("ownerB")
 	b := ownerB.createHousehold("Casa B")
@@ -216,7 +222,7 @@ func TestHouseholdIsolation(t *testing.T) {
 	catB := ownerB.firstCategory(b.ID, "EXPENSE")
 
 	before := countRows(t, api)
-	for _, rt := range householdRoutes(routeIDs{member: a.MemberID, invite: invA.ID, category: catA.ID, account: accA.ID, transaction: txA.ID, obligation: forecastA.ID}) {
+	for _, rt := range householdRoutes(routeIDs{member: a.MemberID, invite: invA.ID, category: catA.ID, account: accA.ID, transaction: txA.ID, obligation: forecastA.ID, template: tplA.ID}) {
 		path := strings.TrimSuffix("/api/v1/households/"+a.ID+rt.path, "/")
 		r := ownerB.expect(http.StatusNotFound, rt.method, path, rt.body)
 		if r.errorCode(t) != "HOUSEHOLD_NOT_FOUND" {
@@ -268,6 +274,30 @@ func TestHouseholdIsolation(t *testing.T) {
 	ownerB.expect(http.StatusNotFound, http.MethodPost, "/api/v1/households/"+b.ID+"/obligations/"+forecastA.ID+"/payments",
 		map[string]any{"amountCents": 1, "paidOn": "2026-11-10"}, "Idempotency-Key", uuid.NewString())
 	ownerB.expect(http.StatusNotFound, http.MethodPost, "/api/v1/households/"+b.ID+"/obligations/"+forecastA.ID+"/cancel", nil)
+	ownerB.expect(http.StatusNotFound, http.MethodPatch, "/api/v1/households/"+b.ID+"/quick-templates/"+tplA.ID, map[string]any{"label": "x"})
+	ownerB.expect(http.StatusNotFound, http.MethodDelete, "/api/v1/households/"+b.ID+"/quick-templates/"+tplA.ID, nil)
+	if l := ownerB.templates(b.ID); len(l) != 0 {
+		t.Fatalf("B lists templates %+v", l)
+	}
+	// A's category, account or member in a template of B: rejected as if they did not exist.
+	personalTpl := templateBody(catB.ID, nil)
+	personalTpl["scope"], personalTpl["personMemberId"] = "PERSONAL", a.MemberID
+	for _, tc := range []struct {
+		body map[string]any
+		code string
+	}{
+		{templateBody(catA.ID, nil), "CATEGORY_NOT_FOUND"},
+		{templateBody(catB.ID, &accA.ID), "ACCOUNT_NOT_FOUND"},
+		{personalTpl, "PERSON_NOT_MEMBER"},
+	} {
+		if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/quick-templates", tc.body).errorCode(t); code != tc.code {
+			t.Fatalf("got %s, want %s", code, tc.code)
+		}
+	}
+	// "Repeat last" in B never returns A's entries.
+	if got, _ := ownerB.transactions(b.ID, url.Values{"createdBy": {"me"}, "limit": {"1"}}); len(got) != 0 {
+		t.Fatalf("B's last = %+v", got)
+	}
 	// Filtering B's transactions by A's IDs finds nothing (and never A's rows).
 	for _, filter := range []string{"categoryId=" + catA.ID, "accountId=" + accA.ID, "personMemberId=" + a.MemberID, "status=ALL"} {
 		var page struct{ Items []transactionDTO }
@@ -337,7 +367,7 @@ func TestHouseholdIsolation(t *testing.T) {
 func TestEveryHouseholdRouteIsCoveredByIsolationTests(t *testing.T) {
 	api := newTestAPI(t)
 	covered := map[string]bool{}
-	for _, rt := range householdRoutes(routeIDs{"{memberId}", "{inviteId}", "{categoryId}", "{accountId}", "{transactionId}", "{obligationId}"}) {
+	for _, rt := range householdRoutes(routeIDs{"{memberId}", "{inviteId}", "{categoryId}", "{accountId}", "{transactionId}", "{obligationId}", "{templateId}"}) {
 		covered[rt.method+" /api/v1/households/{householdId}"+rt.path] = true
 	}
 
@@ -399,7 +429,7 @@ func TestAuditTrail(t *testing.T) {
 func countRows(t *testing.T, api *testAPI) map[string]int64 {
 	t.Helper()
 	out := map[string]int64{}
-	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers", "transactions", "obligations", "obligation_payments"} {
+	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers", "transactions", "obligations", "obligation_payments", "quick_templates"} {
 		var n int64
 		if err := api.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -423,6 +453,7 @@ func countRows(t *testing.T, api *testAPI) map[string]int64 {
 		"voided_transactions":   "SELECT count(*) FROM transactions WHERE status = 'VOIDED'",
 		"edited_transactions":   "SELECT count(*) FROM transactions WHERE updated_at <> created_at",
 		"cancelled_obligations": "SELECT count(*) FROM obligations WHERE status = 'CANCELLED'",
+		"edited_templates":      "SELECT count(*) FROM quick_templates WHERE updated_at <> created_at",
 	} {
 		var n int64
 		if err := api.pool.QueryRow(context.Background(), query).Scan(&n); err != nil {

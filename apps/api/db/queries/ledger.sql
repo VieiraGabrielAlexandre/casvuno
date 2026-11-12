@@ -80,7 +80,8 @@ WHERE household_id = @household_id AND id = @id AND status = 'PLANNED';
 
 -- Transactions newest first, keyset-paginated on (occurred_on, id) (RN-025). Filters are
 -- optional; category_id also matches its subcategories; text searches description, merchant
--- and notes (case-insensitive substring); status NULL means any status.
+-- and notes (case-insensitive substring); status NULL means any status; created_by_member_id
+-- serves "repeat last" (createdBy=me).
 -- name: ListTransactions :many
 SELECT t.id, t.kind, t.scope, t.person_member_id, t.created_by_member_id, t.description, t.merchant, t.notes,
        t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.status, t.created_at,
@@ -96,6 +97,7 @@ WHERE t.household_id = @household_id
        OR t.category_id IN (SELECT c.id FROM categories c
                             WHERE c.household_id = t.household_id AND c.parent_id = sqlc.narg(category_id)::uuid))
   AND (sqlc.narg(account_id)::uuid IS NULL OR t.account_id = sqlc.narg(account_id)::uuid)
+  AND (sqlc.narg(created_by_member_id)::uuid IS NULL OR t.created_by_member_id = sqlc.narg(created_by_member_id)::uuid)
   AND (sqlc.narg(person_member_id)::uuid IS NULL OR t.person_member_id = sqlc.narg(person_member_id)::uuid)
   AND (sqlc.narg(scope)::text IS NULL OR t.scope = sqlc.narg(scope)::text)
   AND (sqlc.narg(payment_method)::text IS NULL OR t.payment_method = sqlc.narg(payment_method)::text)
@@ -135,3 +137,47 @@ WHERE household_id = @household_id AND id = @id AND status = 'ACTIVE';
 -- name: CancelObligation :exec
 UPDATE obligations SET status = 'CANCELLED', updated_at = now()
 WHERE household_id = @household_id AND id = @id AND status <> 'CANCELLED';
+
+-- Quick templates are private to their member (I-46): every query filters by member too.
+-- name: ListQuickTemplates :many
+SELECT id, label, kind, description, default_amount_cents, category_id, scope, person_member_id, payment_method,
+       account_id, sort_order, created_at, updated_at
+FROM quick_templates
+WHERE household_id = @household_id AND member_id = @member_id
+ORDER BY sort_order, lower(label), id;
+
+-- name: GetQuickTemplate :one
+SELECT id, label, kind, description, default_amount_cents, category_id, scope, person_member_id, payment_method,
+       account_id, sort_order, created_at, updated_at
+FROM quick_templates
+WHERE household_id = @household_id AND member_id = @member_id AND id = @id;
+
+-- name: LockQuickTemplate :one
+SELECT id FROM quick_templates
+WHERE household_id = @household_id AND member_id = @member_id AND id = @id
+FOR UPDATE;
+
+-- Serialises template creation per member, so the per-member limit holds under concurrency.
+-- name: LockMemberTemplates :exec
+SELECT pg_advisory_xact_lock(hashtextextended(@lock_key::text, 0));
+
+-- name: QuickTemplateStats :one
+SELECT count(*) AS total, COALESCE(max(sort_order) + 1, 0)::integer AS next_sort_order
+FROM quick_templates
+WHERE household_id = @household_id AND member_id = @member_id;
+
+-- name: CreateQuickTemplate :exec
+INSERT INTO quick_templates (id, household_id, member_id, label, kind, description, default_amount_cents, category_id,
+                             scope, person_member_id, payment_method, account_id, sort_order)
+VALUES (@id, @household_id, @member_id, @label, @kind, @description, sqlc.narg(default_amount_cents), @category_id,
+        @scope, sqlc.narg(person_member_id), @payment_method, sqlc.narg(account_id), @sort_order);
+
+-- name: UpdateQuickTemplate :exec
+UPDATE quick_templates
+SET label = @label, description = @description, default_amount_cents = sqlc.narg(default_amount_cents),
+    category_id = @category_id, scope = @scope, person_member_id = sqlc.narg(person_member_id),
+    payment_method = @payment_method, account_id = sqlc.narg(account_id), sort_order = @sort_order, updated_at = now()
+WHERE household_id = @household_id AND member_id = @member_id AND id = @id;
+
+-- name: DeleteQuickTemplate :execrows
+DELETE FROM quick_templates WHERE household_id = @household_id AND member_id = @member_id AND id = @id;
