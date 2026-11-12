@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F3 — Lançamentos: **concluída** (F3.1–F3.4 na API, F3.5 na web; entrega 12 ainda não commitada). Próxima: F4.1 (domínio puro de cartões: `Split` e ciclo da fatura).
+F4 — Cartões e faturas: F4.1 concluída (domínio puro; entrega 13 ainda não commitada). Próxima: F4.2 (`credit_cards` + CRUD).
 
 ## Concluído
 
@@ -299,8 +299,24 @@ I-04, I-08, I-15 (deslocar compra retroativa para a próxima fatura aberta), I-1
 | `make build` | export estático com `/entry`, `/transactions`, `/obligations` e `/favorites` |
 | Chrome headless (viewport 390×844) via DevTools Protocol, `make web` + API do Compose | botão `+` na família → `/entry`; toque no favorito "Café" preenche R$ 12,50; "Lançar" → "Despesa de R$ 12,50 lançada em 11/11/2026" (**3 interações**); lista mostra o café e o mercado; cancelar o mercado com confirmação → some da lista padrão; condomínio previsto aparece "Vencida"; Pagar sugere R$ 650,00 e, sem conta definida e com duas contas, pede a conta; com a conta → "paga por completo"; favoritos listados. Saldo final conferido pela API: 100000 − 1250 − 23490 + 23490 − 65000 = 33750 |
 
+### 2026-11-12 — Entrega 13: regras puras de cartão (F4.1, domínio)
+- Pacote `apps/api/internal/cards/domain` (sem IO, sem relógio, sem banco):
+  - `Split(total, n)` (RN-010): `base = total/n`, as primeiras `total % n` recebem +1 centavo; `MaxInstallments = 60` (I-32); rejeita `n` fora de 1..60, total fora de 1..`MaxAbsCents` e parcela menor que R$ 0,01 (I-48).
+  - `NewCycle(closingDay, dueDay)` (1..31), `PeriodFor(data)` (fatura com o menor fechamento **posterior** à compra; compra no dia do fechamento vai para a próxima; dias normalizados para o último dia do mês; vencimento = primeiro `due_day` estritamente depois do fechamento), `Next(período)` (encadeado no fechamento anterior).
+  - `Allocate(faturasExistentes, data, n)`: usa a fatura existente que contém a data, senão continua a cadeia a partir da última existente (devolvendo em `Create` as que faltam, sem buracos), senão a regra atual; pula faturas `CLOSED` (`Shifted`); rejeita período calculado que se sobrepõe a uma fatura existente (`CARD_CYCLE_OVERLAP`) e cadeia inconsistente (`CARD_INVOICES_INCONSISTENT`, com teto de iterações contra laço infinito).
+- Ainda sem rota, tabela ou tela: a F4.2 cria `credit_cards` e a F4.3 usa `Allocate` na compra no crédito.
+
+## Comandos executados (entrega 13) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test -race ./internal/cards/domain/...` | ok: T06 (100,01 em 3× = 33,34 + 33,34 + 33,33), rejeições do `Split`; tabela do ADR 0003 (fechamento 31 em fevereiro bissexto e não bissexto, abril, dezembro→janeiro; `closing == due`, `due < closing`, `due > closing`; compra em fechamento −1, no fechamento (T14) e +1; 28/02 e 29/02 de ano bissexto (T13); 12× atravessando o ano; mudança de `closing_day` com faturas existentes; fatura fechada deslocando parcelas) |
+| `go test -fuzz=FuzzSplit` (20 s e 15 s) / `-fuzz=FuzzCycle` (30 s e 20 s) | PASS (~4,9 milhões de execuções no `Split`): soma exata, parcelas ≥ 1, não crescentes, diferença ≤ 1; período contém a compra, ciclo de 28 a 31 dias, vencimento até 31 dias após o fechamento, `Next` = `PeriodFor(fechamento)`, parcelas encadeadas |
+| Mutação manual (compra no dia do fechamento ficando no ciclo atual) | 1ª tentativa: o `sed` não casou e os testes passaram (sem efeito); 2ª: o teste travou num laço infinito do `walker` e derrubou a sessão. Corrigido com a checagem de período inválido e teto de iterações; 3ª: 11 testes falham (T13, T14, virada do ano, fuzz) em vez de travar; código restaurado |
+| `make lint-go` | 1ª: `gofmt` no teste e falso positivo G602 do gosec; corrigidos sem `//nolint` → 0 issues |
+| `make test-go-unit` | ok em todos os pacotes |
+
 ## Próxima tarefa
-F4.1 — `cards/domain`: `Split` (RN-010, fuzz) e `cardcycle` (ADR 0003), funções puras.
+F4.2 — migration `credit_cards` + CRUD (sem PAN/CVV, `last_four` opcional; `closing_day`/`due_day` validados com `domain.NewCycle`); arquivar só sem saldo em aberto.
 
 ## Pendências reais
 - **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos a cobrir lá, **da F3.5:** `+` → favorito completo → Lançar em ≤ 3 interações; lançamento pago e previsto (com e sem conta); repetir último; descrição vazia vira a categoria; duplo clique/retentativa sem lançar em dobro; offline sem falso sucesso (T19 parcial); filtros da lista (texto, período, categoria com subcategorias, cancelados); editar lançamento; corrigir (original cancelado, novo lançado, saldo certo); cancelar lançamento e conferir o saldo; pagar previsão parcial e total, vencida, previsão sem conta pedindo a conta; editar e cancelar previsão; criar/editar/excluir favorito; favorito invisível para outro membro. **Das fases anteriores:** categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
