@@ -135,9 +135,9 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 
 ### F4 — Cartões e faturas
 
-| ID | Tarefa | Dep. | Aceite | Verificar |
-|---|---|---|---|---|
-| F4.1 | `cards/domain`: `Split` (RN-010, fuzz) e `cardcycle` (ADR 0003) puros | F0.2 | T06, T13, T14 e toda a tabela do ADR 0003 | `go test ./internal/cards/domain/...` |
+| ID | Tarefa | Dep. | Aceite | Verificar | Status |
+|---|---|---|---|---|---|
+| F4.1 | `cards/domain`: `Split` (RN-010, fuzz) e `cardcycle` (ADR 0003) puros | F0.2 | T06, T13, T14 e toda a tabela do ADR 0003 | `go test ./internal/cards/domain/...` | ✅ (entrega 13; I-48) |
 | F4.2 | Migration `credit_cards` + CRUD (sem PAN/CVV, `last_four` opcional); arquivar sem saldo em aberto | F1.5 | Validação 1..31; outra família → 404 | `make test` |
 | F4.3 | Migration `card_invoices`/`card_installments` (+ ALTER em `transactions`); compra no crédito no `ledger` (find-or-create de faturas, lock, deslocamento se CLOSED) | F4.1, F4.2, F3.1 | T05; INV-02/03; compra retroativa com `allocationShifted` | `make test` |
 | F4.4 | Listar faturas por cartão/período; detalhe (parcelas, ajustes, pagamentos, saldo); fechar (manual, congela base) | F4.3 | INV-15; fechar antes de `closing_on` → 422 | `make test` |

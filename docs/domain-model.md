@@ -113,7 +113,7 @@ v = valor da operação; p = valor pago.
 
 ## 7. Regras de cálculo (funções puras)
 
-- `installments.Split(total, n)`: `base = total/n`, as primeiras `total % n` parcelas recebem +1 (RN-010). Teste de fuzz garante que a soma é exata.
-- `cardcycle.InvoiceFor(card, existingInvoices, purchaseDate)` e `cardcycle.Next(invoice, card)`: ver ADR 0003.
+- `cards/domain.Split(total, n)`: `base = total/n`, as primeiras `total % n` parcelas recebem +1 (RN-010); parcela mínima de R$ 0,01 (I-48). Teste de fuzz garante que a soma é exata.
+- `cards/domain.Cycle` (ADR 0003): `NewCycle(closingDay, dueDay)`; `PeriodFor(data)` (regra atual); `Next(período)` (encadeado no fechamento anterior); `Allocate(faturasExistentes, data, n)` (faturas de cada parcela, as que faltam criar e `Shifted` quando pula fatura `CLOSED`; I-48).
 - `schedule.Occurrences(rule, from, to)`: mensal normaliza `day_of_month` para o último dia do mês; semanal usa `weekday` (0 = domingo); anual usa o dia/mês de `start_on` (29/02 vira 28/02 em ano não bissexto); respeita `interval_count` e `end_on`.
 - `forecast.Month(...)`: compromissos por mês de vencimento = obrigações em aberto + saldo de faturas + ocorrências `PLANNED` de cartão projetadas na fatura calculada. Separa "previsto" (PLANNED, faturas `OPEN` futuras) de "confirmado".
