@@ -321,7 +321,11 @@ func TestInvariantCheckerDetectsViolations(t *testing.T) {
 		          'IN', 20, '2026-11-10', 'DIRECT_RECEIPT', 'x');
 		INSERT INTO obligation_payments (id, household_id, obligation_id, account_movement_id, amount_cents, paid_on, created_by_member_id)
 		  VALUES ('00000000-0000-7000-8000-000000000010', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-00000000000c',
-		          '00000000-0000-7000-8000-00000000000f', 20, '2026-11-10', '00000000-0000-7000-8000-000000000003');`)
+		          '00000000-0000-7000-8000-00000000000f', 20, '2026-11-10', '00000000-0000-7000-8000-000000000003');
+		-- INV-19: a payment reversed while its obligation is still open.
+		INSERT INTO account_movements (id, household_id, account_id, direction, amount_cents, posted_on, kind, reversal_of_id, description)
+		  VALUES ('00000000-0000-7000-8000-000000000011', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000004',
+		          'IN', 150, '2026-11-10', 'REVERSAL', '00000000-0000-7000-8000-00000000000d', 'x');`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +340,8 @@ func TestInvariantCheckerDetectsViolations(t *testing.T) {
 	}
 	// INV-05 twice: the mismatched payment and the orphan DIRECT_PAYMENT planted for INV-18.
 	// INV-13: the payments were planted on a PLANNED obligation.
-	want := map[string]int{"INV-03": 1, "INV-04": 1, "INV-05": 2, "INV-08": 1, "INV-13": 1, "INV-18": 1}
+	// INV-19 twice: the planted reversal of a payment, and the INV-18 "reversal" of an orphan movement.
+	want := map[string]int{"INV-03": 1, "INV-04": 1, "INV-05": 2, "INV-08": 1, "INV-13": 1, "INV-18": 1, "INV-19": 2}
 	if !maps.Equal(found, want) {
 		t.Fatalf("violations = %v, want %v", violations, want)
 	}

@@ -26,10 +26,12 @@ type accountListDTO struct {
 }
 
 type movementDTO struct {
-	ID          string `json:"id"`
-	Direction   string `json:"direction"`
-	AmountCents int64  `json:"amountCents"`
-	PostedOn    string `json:"postedOn"`
+	ID          string  `json:"id"`
+	Direction   string  `json:"direction"`
+	AmountCents int64   `json:"amountCents"`
+	PostedOn    string  `json:"postedOn"`
+	Kind        string  `json:"kind"`
+	ReversalOf  *string `json:"reversalOfId"`
 }
 
 // createAccount opens an account; fields override sensible defaults.
@@ -63,19 +65,6 @@ func (api *testAPI) paidMovementID(transactionID string) string {
 		api.t.Fatal(err)
 	}
 	return id
-}
-
-// insertReversal writes a reversal directly: its API arrives with void (F3.3), but balances
-// must already account for it.
-func (api *testAPI) insertReversal(householdID, accountID string, cents int64, postedOn, of string) {
-	api.t.Helper()
-	_, err := api.pool.Exec(context.Background(), `
-		INSERT INTO account_movements (id, household_id, account_id, direction, amount_cents, posted_on, kind, reversal_of_id, description)
-		VALUES (uuidv7(), $1, $2, 'IN', $3, $4, 'REVERSAL', $5, 'teste')`,
-		householdID, accountID, cents, postedOn, of)
-	if err != nil {
-		api.t.Fatal(err)
-	}
 }
 
 // T21: individual and joint accounts are both part of the family cash, each counted once.
@@ -116,7 +105,7 @@ func TestBalanceIsDerivedFromMovements(t *testing.T) {
 	expenseCat, incomeCat := owner.firstCategory(h.ID, "EXPENSE"), owner.firstCategory(h.ID, "INCOME")
 	owner.createTransaction(h.ID, entryBody("INCOME", incomeCat.ID, a.ID, 5000, "2026-11-02"))
 	out := owner.createTransaction(h.ID, entryBody("EXPENSE", expenseCat.ID, a.ID, 1250, "2026-11-03"))
-	api.insertReversal(h.ID, a.ID, 1250, "2026-11-04", api.paidMovementID(out.ID))
+	owner.voidTransaction(h.ID, out.ID) // REVERSAL IN 1250
 	owner.transfer(h.ID, a.ID, b.ID, 3000, "2026-11-05")
 
 	var got accountDTO

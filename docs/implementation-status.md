@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F3 — Lançamentos: **F3.1 e F3.2 concluídas** (entregas 8 e 9, API, ainda não commitadas). Próxima: F3.3 (listar/filtrar transações, PATCH não estrutural, void, estorno, cancelar previsão).
+F3 — Lançamentos: **F3.1, F3.2 e F3.3 concluídas** (entregas 8–10, API; F3.1/F3.2 mescladas no PR #9, F3.3 ainda não commitada). Próxima: F3.4 (favoritos e "repetir último").
 
 ## Concluído
 
@@ -217,12 +217,36 @@ I-04, I-08, I-15 (deslocar compra retroativa para a próxima fatura aberta), I-1
 | `go mod tidy -diff` / `make gen` / `make build` | limpo / idempotente / ok |
 | Stack real: `make up`, curl, `make check-invariants` | condomínio previsto de R$ 650 → `transaction: null`, `PLANNED`, saldo inalterado (100000); pagamento de R$ 200 → 201 e reenvio com `Idempotent-Replayed: true`; R$ 450 → `PAID`, 2 pagamentos; saldo 35000; nenhuma obrigação em aberto; nenhuma violação |
 
+### 2026-11-11 — Entrega 10: listar, editar e cancelar lançamentos (F3.3, API)
+- **`GET /transactions`:** mais recentes primeiro (`occurredOn`, `id` desc), paginação por cursor; filtros combináveis `from`/`to`, `kind`, `categoryId` (inclui subcategorias), `accountId`, `personMemberId`, `scope`, `paymentMethod`, `q` (texto sem diferenciar maiúsculas em descrição, estabelecimento e observações, até 100 caracteres) e `status` (`ACTIVE` padrão, `VOIDED`, `ALL`).
+- **`PATCH /transactions/{id}` (I-18):** descrição, estabelecimento, observações, categoria (ativa, mesmo tipo), escopo e pessoa (membro ativo); `""` limpa os opcionais. A obrigação vinculada acompanha descrição e classificação. Lançamento cancelado → 422 `TRANSACTION_VOIDED`. Só o que mudou é validado e auditado (`transaction.updated` com nomes de campos).
+- **`POST /transactions/{id}/void` (idempotente, ADR 0007):**
+  - trava transação → obrigação → contas (por ID);
+  - transação `VOIDED`, obrigação `CANCELLED`, um `REVERSAL` espelhado para cada pagamento (INV-18), datado de hoje no fuso da família ou da data do pagamento, se posterior;
+  - os pagamentos ficam no histórico; consumo e compromisso somem e o dinheiro volta;
+  - repetir com outra chave → 200 sem nada novo; conta arquivada envolvida → 422 `ACCOUNT_ARCHIVED`.
+- **Estorno no `accounts`:** `ReverseMovements` (só pagamentos e recebimentos diretos; transferências seguem imutáveis, I-37), ligado ao ledger por `ledger.Cash.ReverseCash` no composition root.
+- **`POST /obligations/{id}/cancel`:** previsão `PLANNED` → `CANCELLED` (auditado); já cancelada → 200 sem mudança; com pagamento → 422 `OBLIGATION_NOT_PLANNED` (cancele o lançamento).
+- **INV-19** no `check-invariants.sql` (3 consultas): void e obrigação cancelada andam juntos; todo pagamento de obrigação cancelada está estornado; pagamento direto só é estornado com a obrigação cancelada.
+- Sem migration: as colunas de status já existiam desde a 000009.
+- **Docs:** OpenAPI 0.9.0, plano (F3.3 ✅), `spec-review` (I-45), ADR 0007 (ordem de locks do void), `domain-model` (INV-19 ✔︎SQL).
+
+## Comandos executados (entrega 10) e resultados reais
+| Comando | Resultado |
+|---|---|
+| `go test -tags integration ./internal/app/` (testes novos) | 1ª execução: `check-invariants.sql` com erro de sintaxe (o `;` da última consulta ficou antes do novo `UNION ALL`); corrigido. 2ª: só o teste de isolamento falhou, porque a família B agora tem um lançamento próprio a mais na listagem; asserção ajustada para "nenhum item da família A". 3ª: ok |
+| Testes novos de integração | **Void imediato:** consumo 0, saldo restaurado, obrigação `CANCELLED`, `REVERSAL` IN com `reversalOfId` = pagamento e data de hoje, pagamento mantido, replay com mesma chave (mesmos bytes), outra chave sem novas linhas, auditoria, PATCH depois → 422. **Void de previsão paga em 2 contas:** 2 estornos, saldos restaurados, pagamento futuro estornado na própria data, novo pagamento → `OBLIGATION_CANCELLED`; void de receita → estorno OUT. **Conta arquivada:** 422 sem gravar; após restaurar, ok. **10 voids simultâneos:** todos 200, 1 estorno. **Cancelar previsão:** some das pendências, repetir é no-op, pagar/editar → 422, cancelar paga → 422, auditoria. **PATCH:** todos os campos, obrigação sincronizada, caixa inalterado, no-op sem auditoria, 12 entradas inválidas sem gravar. **Listagem:** 16 combinações de filtro (subcategoria, texto, cancelados), paginação limit=2 percorre tudo em ordem, 10 parâmetros inválidos → 400, membro vê tudo. **Isolamento:** 4 rotas novas; void/PATCH/cancel de outra família → 404; filtros com IDs de A em B → vazio; categoria/pessoa de A no PATCH em B → 422; contagem agora também detecta void, edição e cancelamento. **Verificador:** detecta INV-19 |
+| `go test ./internal/ledger/` | ok (+ descrição do estorno truncada por caractere) |
+| `make lint` | 0 issues; ESLint, Prettier e `tsc` ok |
+| `make test` | 9 pacotes Go ok; Vitest 63/63 |
+| `go mod tidy -diff` / `make gen` | limpo / idempotente |
+| Stack real: `make up`, curl, `make check-invariants` | gasto de R$ 12,50 (saldo 98750); PATCH de descrição/estabelecimento; busca `q=PÃO` encontra "Pão Quente"; void → `VOIDED`, replay com `Idempotent-Replayed: true`, outra chave → 200; saldo 100000; extrato `REVERSAL IN 1250` em 2026-11-11 + `DIRECT_PAYMENT OUT`; lista padrão 0 / `ALL` 1; previsão cancelada (`outstandingCents` 0), 0 em aberto; nenhuma violação |
+
 ## Próxima tarefa
-F3.3 — listar/filtrar transações (período, categoria, conta, pessoa, escopo, meio, texto) com keyset; `PATCH` não estrutural (I-18); void de lançamento fora do cartão com **estorno de movimento** (`REVERSAL`, INV-18/19); cancelar previsão.
+F3.4 — migration `quick_templates`; CRUD de favoritos; "repetir último" (`GET /transactions?createdBy=me&limit=1`).
 
 ## Pendências reais
-- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). F3.1 e F3.2 não têm tela (lançamento rápido e pendências são a F3.5).
-- **Previsão errada não pode ser cancelada ainda:** só editada (valor, vencimento, descrição). O cancelamento entra na F3.3. Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
+- **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). F3.1–F3.3 não têm tela (lançamento rápido, lista com filtros, pendências e "Corrigir" são a F3.5). Fluxos de UI a cobrir lá, desta fase: categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
 - **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
 - **Sem limpeza de sessões, convites e chaves de idempotência expirados:** ficam no banco (inofensivos, filtrados por data) até existir o worker (F5.2).

@@ -88,3 +88,11 @@ FROM transfers t
 JOIN accounts fa ON fa.household_id = t.household_id AND fa.id = t.from_account_id
 JOIN accounts ta ON ta.household_id = t.household_id AND ta.id = t.to_account_id
 WHERE t.household_id = @household_id AND t.id = @id;
+
+-- A movement about to be reversed, with whether it already was (INV-18).
+-- name: GetMovementForReversal :one
+SELECT m.id, m.account_id, m.direction, m.amount_cents, m.posted_on, m.kind, m.description,
+       EXISTS (SELECT 1 FROM account_movements r
+               WHERE r.household_id = m.household_id AND r.reversal_of_id = m.id) AS reversed
+FROM account_movements m
+WHERE m.household_id = @household_id AND m.id = @id;

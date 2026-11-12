@@ -85,6 +85,10 @@ func (c ledgerCash) PostCash(ctx context.Context, householdID uuid.UUID, mv ledg
 	return c.accounts.PostMovement(ctx, householdID, in)
 }
 
+func (c ledgerCash) ReverseCash(ctx context.Context, householdID uuid.UUID, movementIDs []uuid.UUID, on time.Time, description string) error {
+	return c.accounts.ReverseMovements(ctx, householdID, movementIDs, on, description)
+}
+
 func (c ledgerCash) RequireActiveAccount(ctx context.Context, householdID, accountID uuid.UUID, field string) error {
 	return c.accounts.RequireActive(ctx, householdID, accountID, field)
 }

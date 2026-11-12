@@ -3,6 +3,8 @@ package ledger
 import (
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,11 +31,15 @@ func NewHandler(svc *Service, idem *idempotency.Middleware, log *slog.Logger) *H
 // Routes registers routes relative to /households/{householdId} (behind RequireMember).
 func (h *Handler) Routes(r chi.Router) {
 	r.With(h.idem.Require).Post("/transactions", h.create) // ADR 0007
+	r.Get("/transactions", h.list)
 	r.Get("/transactions/{transactionId}", h.get)
+	r.Patch("/transactions/{transactionId}", h.update)
+	r.With(h.idem.Require).Post("/transactions/{transactionId}/void", h.void) // ADR 0007
 
 	r.Get("/obligations", h.listObligations)
 	r.Get("/obligations/{obligationId}", h.getObligation)
 	r.Patch("/obligations/{obligationId}", h.updateObligation)
+	r.Post("/obligations/{obligationId}/cancel", h.cancelObligation)
 	r.With(h.idem.Require).Post("/obligations/{obligationId}/payments", h.payObligation) // ADR 0007
 }
 
@@ -204,9 +210,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "transactionId"))
-	if err != nil {
-		httpx.WriteError(w, r, h.log, errNotFound)
+	id, ok := h.transactionID(w, r)
+	if !ok {
 		return
 	}
 	m, _ := authctx.MembershipFrom(r.Context())
@@ -216,6 +221,153 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toResponse(t))
+}
+
+type transactionCursor struct {
+	OccurredOn string `json:"d"`
+	ID         string `json:"i"`
+}
+
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	q, err := parseTransactionQuery(r)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	m, _ := authctx.MembershipFrom(r.Context())
+	list, next, err := h.svc.ListTransactions(r.Context(), m, q)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	page := httpx.Page[transactionResponse]{Items: make([]transactionResponse, 0, len(list))}
+	for _, t := range list {
+		page.Items = append(page.Items, toResponse(t))
+	}
+	if next != nil {
+		c := httpx.EncodeCursor(transactionCursor{OccurredOn: kernel.FormatDate(next.OccurredOn), ID: next.ID.String()})
+		page.NextCursor = &c
+	}
+	httpx.WriteJSON(w, http.StatusOK, page)
+}
+
+func parseTransactionQuery(r *http.Request) (TransactionQuery, error) {
+	limit, err := httpx.ParseLimit(r)
+	if err != nil {
+		return TransactionQuery{}, err
+	}
+	values := r.URL.Query()
+	q := TransactionQuery{Status: values.Get("status"), Limit: limit}
+	enums := []struct {
+		field   string
+		allowed []string
+		dst     **string
+	}{
+		{"kind", []string{KindExpense, KindIncome}, &q.Kind},
+		{"scope", []string{ScopePersonal, ScopeFamily}, &q.Scope},
+		{"paymentMethod", []string{"PIX", "DEBIT", "CASH", "BANK_TRANSFER", "BOLETO", "OTHER"}, &q.PaymentMethod},
+	}
+	for _, e := range enums {
+		if v := values.Get(e.field); v != "" {
+			if !slices.Contains(e.allowed, v) {
+				return q, validation(e.field, "oneof="+strings.Join(e.allowed, " "), "Filtro inválido.")
+			}
+			*e.dst = &v
+		}
+	}
+	for field, dst := range map[string]**uuid.UUID{"categoryId": &q.CategoryID, "accountId": &q.AccountID, "personMemberId": &q.PersonMemberID} {
+		if *dst, err = parseOptionalID(field, values.Get(field)); err != nil {
+			return q, err
+		}
+	}
+	for field, dst := range map[string]**time.Time{"from": &q.From, "to": &q.To} {
+		if raw := values.Get(field); raw != "" {
+			d, err := parseDate(field, raw)
+			if err != nil {
+				return q, err
+			}
+			*dst = &d
+		}
+	}
+	if q.From != nil && q.To != nil && q.From.After(*q.To) {
+		return q, validation("from", "before_or_equal_to", "A data inicial deve ser anterior à final.")
+	}
+	if text := values.Get("q"); text != "" {
+		q.Text = &text
+	}
+	var pos transactionCursor
+	if err := httpx.DecodeCursor(r, &pos); err != nil {
+		return q, err
+	}
+	if pos.ID != "" {
+		d, errDate := kernel.ParseDate(pos.OccurredOn)
+		id, errID := uuid.Parse(pos.ID)
+		if errDate != nil || errID != nil {
+			return q, validation("cursor", "invalid", "Cursor de paginação inválido.")
+		}
+		q.After = &TransactionPosition{OccurredOn: d, ID: id}
+	}
+	return q, nil
+}
+
+// updateRequest: absent fields stay; "" clears merchant, notes and personMemberId.
+type updateRequest struct {
+	Description    *string `json:"description,omitempty"`
+	Merchant       *string `json:"merchant,omitempty"`
+	Notes          *string `json:"notes,omitempty"`
+	CategoryID     *string `json:"categoryId,omitempty" validate:"omitempty,uuid"`
+	Scope          *string `json:"scope,omitempty"`
+	PersonMemberID *string `json:"personMemberId,omitempty"`
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.transactionID(w, r)
+	if !ok {
+		return
+	}
+	var req updateRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	in := TransactionUpdate{
+		Description: req.Description, Merchant: req.Merchant, Notes: req.Notes, Scope: req.Scope,
+		PersonMemberID: req.PersonMemberID,
+	}
+	if req.CategoryID != nil {
+		cid := uuid.MustParse(*req.CategoryID) // validated by tags
+		in.CategoryID = &cid
+	}
+	m, _ := authctx.MembershipFrom(r.Context())
+	t, err := h.svc.Update(r.Context(), m, id, in)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toResponse(t))
+}
+
+func (h *Handler) void(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.transactionID(w, r)
+	if !ok {
+		return
+	}
+	m, _ := authctx.MembershipFrom(r.Context())
+	t, err := h.svc.Void(r.Context(), m, id)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toResponse(t))
+}
+
+func (h *Handler) transactionID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	id, err := uuid.Parse(chi.URLParam(r, "transactionId"))
+	if err != nil {
+		httpx.WriteError(w, r, h.log, errNotFound)
+		return uuid.Nil, false
+	}
+	return id, true
 }
 
 type obligationCursor struct {
@@ -363,6 +515,20 @@ func (h *Handler) updateObligation(w http.ResponseWriter, r *http.Request) {
 	}
 	m, _ := authctx.MembershipFrom(r.Context())
 	d, err := h.svc.UpdateForecast(r.Context(), m, id, in)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toDetailResponse(d, h.svc.Today(m)))
+}
+
+func (h *Handler) cancelObligation(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.obligationID(w, r)
+	if !ok {
+		return
+	}
+	m, _ := authctx.MembershipFrom(r.Context())
+	d, err := h.svc.CancelForecast(r.Context(), m, id)
 	if err != nil {
 		httpx.WriteError(w, r, h.log, err)
 		return

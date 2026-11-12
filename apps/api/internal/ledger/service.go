@@ -79,12 +79,14 @@ type CashMovement struct {
 	Field       string // request field that carried the account, for error details
 }
 
-// Cash is what the ledger needs from the accounts module. Both methods lock the account
-// until the caller's transaction ends and reject unknown or archived accounts with 422
-// (ACCOUNT_NOT_FOUND/ACCOUNT_ARCHIVED on the given field).
+// Cash is what the ledger needs from the accounts module. Every method locks the accounts
+// it touches until the caller's transaction ends and rejects archived accounts with 422
+// ACCOUNT_ARCHIVED (PostCash and RequireActiveAccount also unknown ones, on the given field).
+// ReverseCash posts one mirrored REVERSAL per movement (INV-18), dated on (or later).
 type Cash interface {
 	PostCash(ctx context.Context, householdID uuid.UUID, mv CashMovement) (uuid.UUID, error)
 	RequireActiveAccount(ctx context.Context, householdID, accountID uuid.UUID, field string) error
+	ReverseCash(ctx context.Context, householdID uuid.UUID, movementIDs []uuid.UUID, on time.Time, description string) error
 }
 
 // Transaction is an income or expense entry (the economic fact).
@@ -162,6 +164,7 @@ var errNotFound = kernel.NewError(kernel.ErrNotFound, "TRANSACTION_NOT_FOUND", "
 //
 // PLANNED (I-08): only a PLANNED obligation holding the draft of the future transaction. It
 // is a commitment, not consumption, until its first payment (PayObligation).
+// Merchant and notes of a forecast can be set after its confirmation (Update).
 func (s *Service) Create(ctx context.Context, m authctx.Membership, in CreateInput) (Entry, error) {
 	in, err := normalize(in)
 	if err != nil {
@@ -248,7 +251,7 @@ func (s *Service) createImmediate(ctx context.Context, m authctx.Membership, txI
 
 // createForecast stores a PLANNED obligation with the draft of the future transaction
 // (I-08). The merchant and notes of a forecast are not kept: the draft has no columns for
-// them, and normalize rejects them (they can be added when the entry is confirmed, F3.3).
+// them, and normalize rejects them (they can be added to the confirmed transaction, Update).
 func (s *Service) createForecast(ctx context.Context, m authctx.Membership, obligationID uuid.UUID, in CreateInput) error {
 	if in.Payment.AccountID != nil {
 		if err := s.cash.RequireActiveAccount(ctx, m.HouseholdID, *in.Payment.AccountID, "payment.accountId"); err != nil {
@@ -286,23 +289,15 @@ func (s *Service) Get(ctx context.Context, m authctx.Membership, id uuid.UUID) (
 // checkReferences validates the IDs that came in the body against the household (ADR 0006):
 // the category (same kind, active, locked against archiving) and the person.
 func (s *Service) checkReferences(ctx context.Context, householdID uuid.UUID, in CreateInput) error {
-	kind, active, found, err := s.categories.LockForEntry(ctx, householdID, in.CategoryID)
-	switch {
-	case err != nil:
-		return err
-	case !found:
-		return kernel.NewError(kernel.ErrInvariant, "CATEGORY_NOT_FOUND", "Categoria não encontrada.",
-			kernel.FieldError{Field: "categoryId", Reason: "not_found"})
-	case kind != in.Kind:
-		msg := "Escolha uma categoria de despesa."
-		if in.Kind == KindIncome {
-			msg = "Escolha uma categoria de receita."
+	return s.checkRefs(ctx, householdID, in, true)
+}
+
+// checkRefs checks the person when given and, if checkCategory, the category.
+func (s *Service) checkRefs(ctx context.Context, householdID uuid.UUID, in CreateInput, checkCategory bool) error {
+	if checkCategory {
+		if err := s.checkCategory(ctx, householdID, in.Kind, in.CategoryID); err != nil {
+			return err
 		}
-		return kernel.NewError(kernel.ErrInvariant, "CATEGORY_KIND_MISMATCH", msg,
-			kernel.FieldError{Field: "categoryId", Reason: "kind_mismatch"})
-	case !active:
-		return kernel.NewError(kernel.ErrInvariant, "CATEGORY_ARCHIVED", "Essa categoria está arquivada.",
-			kernel.FieldError{Field: "categoryId", Reason: "archived"})
 	}
 	if in.PersonMemberID != nil {
 		ok, err := s.members.IsActiveMember(ctx, householdID, *in.PersonMemberID)
@@ -313,6 +308,28 @@ func (s *Service) checkReferences(ctx context.Context, householdID uuid.UUID, in
 			return kernel.NewError(kernel.ErrInvariant, "PERSON_NOT_MEMBER", "A pessoa deve ser um membro ativo da família.",
 				kernel.FieldError{Field: "personMemberId", Reason: "not_active_member"})
 		}
+	}
+	return nil
+}
+
+func (s *Service) checkCategory(ctx context.Context, householdID uuid.UUID, entryKind string, categoryID uuid.UUID) error {
+	kind, active, found, err := s.categories.LockForEntry(ctx, householdID, categoryID)
+	switch {
+	case err != nil:
+		return err
+	case !found:
+		return kernel.NewError(kernel.ErrInvariant, "CATEGORY_NOT_FOUND", "Categoria não encontrada.",
+			kernel.FieldError{Field: "categoryId", Reason: "not_found"})
+	case kind != entryKind:
+		msg := "Escolha uma categoria de despesa."
+		if entryKind == KindIncome {
+			msg = "Escolha uma categoria de receita."
+		}
+		return kernel.NewError(kernel.ErrInvariant, "CATEGORY_KIND_MISMATCH", msg,
+			kernel.FieldError{Field: "categoryId", Reason: "kind_mismatch"})
+	case !active:
+		return kernel.NewError(kernel.ErrInvariant, "CATEGORY_ARCHIVED", "Essa categoria está arquivada.",
+			kernel.FieldError{Field: "categoryId", Reason: "archived"})
 	}
 	return nil
 }

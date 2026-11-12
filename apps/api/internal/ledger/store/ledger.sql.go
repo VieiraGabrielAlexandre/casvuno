@@ -12,6 +12,21 @@ import (
 	"github.com/google/uuid"
 )
 
+const cancelObligation = `-- name: CancelObligation :exec
+UPDATE obligations SET status = 'CANCELLED', updated_at = now()
+WHERE household_id = $1 AND id = $2 AND status <> 'CANCELLED'
+`
+
+type CancelObligationParams struct {
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+func (q *Queries) CancelObligation(ctx context.Context, arg CancelObligationParams) error {
+	_, err := q.db.Exec(ctx, cancelObligation, arg.HouseholdID, arg.ID)
+	return err
+}
+
 const confirmObligation = `-- name: ConfirmObligation :exec
 UPDATE obligations
 SET status = 'CONFIRMED', transaction_id = $1, updated_at = now()
@@ -214,6 +229,22 @@ func (q *Queries) GetObligation(ctx context.Context, arg GetObligationParams) (G
 		&i.PaidCents,
 	)
 	return i, err
+}
+
+const getObligationIDByTransaction = `-- name: GetObligationIDByTransaction :one
+SELECT id FROM obligations WHERE household_id = $1 AND transaction_id = $2
+`
+
+type GetObligationIDByTransactionParams struct {
+	HouseholdID   uuid.UUID
+	TransactionID *uuid.UUID
+}
+
+func (q *Queries) GetObligationIDByTransaction(ctx context.Context, arg GetObligationIDByTransactionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getObligationIDByTransaction, arg.HouseholdID, arg.TransactionID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getTransaction = `-- name: GetTransaction :one
@@ -428,6 +459,124 @@ func (q *Queries) ListObligations(ctx context.Context, arg ListObligationsParams
 	return items, nil
 }
 
+const listTransactions = `-- name: ListTransactions :many
+SELECT t.id, t.kind, t.scope, t.person_member_id, t.created_by_member_id, t.description, t.merchant, t.notes,
+       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.status, t.created_at,
+       t.updated_at
+FROM transactions t
+WHERE t.household_id = $1
+  AND ($2::text IS NULL OR t.status = $2::text)
+  AND ($3::text IS NULL OR t.kind = $3::text)
+  AND ($4::date IS NULL OR t.occurred_on >= $4::date)
+  AND ($5::date IS NULL OR t.occurred_on <= $5::date)
+  AND ($6::uuid IS NULL
+       OR t.category_id = $6::uuid
+       OR t.category_id IN (SELECT c.id FROM categories c
+                            WHERE c.household_id = t.household_id AND c.parent_id = $6::uuid))
+  AND ($7::uuid IS NULL OR t.account_id = $7::uuid)
+  AND ($8::uuid IS NULL OR t.person_member_id = $8::uuid)
+  AND ($9::text IS NULL OR t.scope = $9::text)
+  AND ($10::text IS NULL OR t.payment_method = $10::text)
+  AND ($11::text IS NULL
+       OR strpos(lower(t.description || ' ' || COALESCE(t.merchant, '') || ' ' || COALESCE(t.notes, '')),
+                 lower($11::text)) > 0)
+  AND ($12::date IS NULL
+       OR (t.occurred_on, t.id) < ($12::date, $13::uuid))
+ORDER BY t.occurred_on DESC, t.id DESC
+LIMIT $14
+`
+
+type ListTransactionsParams struct {
+	HouseholdID     uuid.UUID
+	Status          *string
+	Kind            *string
+	FromDate        *time.Time
+	ToDate          *time.Time
+	CategoryID      *uuid.UUID
+	AccountID       *uuid.UUID
+	PersonMemberID  *uuid.UUID
+	Scope           *string
+	PaymentMethod   *string
+	Text            *string
+	AfterOccurredOn *time.Time
+	AfterID         *uuid.UUID
+	RowLimit        int32
+}
+
+type ListTransactionsRow struct {
+	ID                uuid.UUID
+	Kind              string
+	Scope             string
+	PersonMemberID    *uuid.UUID
+	CreatedByMemberID uuid.UUID
+	Description       string
+	Merchant          *string
+	Notes             *string
+	AmountCents       int64
+	CategoryID        uuid.UUID
+	OccurredOn        time.Time
+	PaymentMethod     string
+	AccountID         uuid.UUID
+	Status            string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// Transactions newest first, keyset-paginated on (occurred_on, id) (RN-025). Filters are
+// optional; category_id also matches its subcategories; text searches description, merchant
+// and notes (case-insensitive substring); status NULL means any status.
+func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsParams) ([]ListTransactionsRow, error) {
+	rows, err := q.db.Query(ctx, listTransactions,
+		arg.HouseholdID,
+		arg.Status,
+		arg.Kind,
+		arg.FromDate,
+		arg.ToDate,
+		arg.CategoryID,
+		arg.AccountID,
+		arg.PersonMemberID,
+		arg.Scope,
+		arg.PaymentMethod,
+		arg.Text,
+		arg.AfterOccurredOn,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTransactionsRow
+	for rows.Next() {
+		var i ListTransactionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Scope,
+			&i.PersonMemberID,
+			&i.CreatedByMemberID,
+			&i.Description,
+			&i.Merchant,
+			&i.Notes,
+			&i.AmountCents,
+			&i.CategoryID,
+			&i.OccurredOn,
+			&i.PaymentMethod,
+			&i.AccountID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockObligation = `-- name: LockObligation :one
 SELECT id FROM obligations WHERE household_id = $1 AND id = $2 FOR UPDATE
 `
@@ -443,6 +592,52 @@ func (q *Queries) LockObligation(ctx context.Context, arg LockObligationParams) 
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockTransaction = `-- name: LockTransaction :one
+SELECT id FROM transactions WHERE household_id = $1 AND id = $2 FOR UPDATE
+`
+
+type LockTransactionParams struct {
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+// Serialises edits and the void of one transaction (ADR 0007).
+func (q *Queries) LockTransaction(ctx context.Context, arg LockTransactionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockTransaction, arg.HouseholdID, arg.ID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const updateObligationClassification = `-- name: UpdateObligationClassification :exec
+UPDATE obligations
+SET description = $1, category_id = $2, scope = $3,
+    person_member_id = $4, updated_at = now()
+WHERE household_id = $5 AND id = $6
+`
+
+type UpdateObligationClassificationParams struct {
+	Description    string
+	CategoryID     uuid.UUID
+	Scope          string
+	PersonMemberID *uuid.UUID
+	HouseholdID    uuid.UUID
+	ID             uuid.UUID
+}
+
+// Keeps the confirmed obligation's copy of the classification in step with its transaction.
+func (q *Queries) UpdateObligationClassification(ctx context.Context, arg UpdateObligationClassificationParams) error {
+	_, err := q.db.Exec(ctx, updateObligationClassification,
+		arg.Description,
+		arg.CategoryID,
+		arg.Scope,
+		arg.PersonMemberID,
+		arg.HouseholdID,
+		arg.ID,
+	)
+	return err
 }
 
 const updatePlannedObligation = `-- name: UpdatePlannedObligation :exec
@@ -467,5 +662,53 @@ func (q *Queries) UpdatePlannedObligation(ctx context.Context, arg UpdatePlanned
 		arg.HouseholdID,
 		arg.ID,
 	)
+	return err
+}
+
+const updateTransaction = `-- name: UpdateTransaction :exec
+UPDATE transactions
+SET description = $1, merchant = $2, notes = $3, category_id = $4,
+    scope = $5, person_member_id = $6, updated_at = now()
+WHERE household_id = $7 AND id = $8 AND status = 'ACTIVE'
+`
+
+type UpdateTransactionParams struct {
+	Description    string
+	Merchant       *string
+	Notes          *string
+	CategoryID     uuid.UUID
+	Scope          string
+	PersonMemberID *uuid.UUID
+	HouseholdID    uuid.UUID
+	ID             uuid.UUID
+}
+
+// Non-structural fields only (I-18): amount, date, method and account change by void + new entry.
+func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionParams) error {
+	_, err := q.db.Exec(ctx, updateTransaction,
+		arg.Description,
+		arg.Merchant,
+		arg.Notes,
+		arg.CategoryID,
+		arg.Scope,
+		arg.PersonMemberID,
+		arg.HouseholdID,
+		arg.ID,
+	)
+	return err
+}
+
+const voidTransaction = `-- name: VoidTransaction :exec
+UPDATE transactions SET status = 'VOIDED', updated_at = now()
+WHERE household_id = $1 AND id = $2 AND status = 'ACTIVE'
+`
+
+type VoidTransactionParams struct {
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+func (q *Queries) VoidTransaction(ctx context.Context, arg VoidTransactionParams) error {
+	_, err := q.db.Exec(ctx, voidTransaction, arg.HouseholdID, arg.ID)
 	return err
 }

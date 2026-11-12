@@ -374,7 +374,13 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Lançamentos (mais recentes primeiro; paginação por cursor)
+         * @description Consumo e receitas (transações). Ordem estável por `occurredOn` e `id`, decrescente. Todos os filtros são
+         *     opcionais e se combinam. `categoryId` inclui as subcategorias. `q` busca, sem diferenciar maiúsculas, na
+         *     descrição, no estabelecimento e nas observações. `status` padrão = `ACTIVE` (cancelados ficam de fora).
+         */
+        get: operations["listTransactions"];
         put?: never;
         /**
          * Lançar despesa ou receita, imediata (paga agora) ou prevista
@@ -406,6 +412,38 @@ export interface paths {
         get: operations["getTransaction"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Editar campos não estruturais de um lançamento ativo
+         * @description Só descrição, estabelecimento, observações, categoria (ativa, do mesmo tipo), escopo e pessoa (membro ativo).
+         *     Campo ausente fica como está; `""` limpa `merchant`, `notes` e `personMemberId`. Valor, data, meio e conta mudam
+         *     cancelando (`/void`) e lançando de novo. Lançamento cancelado → 422 `TRANSACTION_VOIDED`.
+         */
+        patch: operations["updateTransaction"];
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/transactions/{transactionId}/void": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                transactionId: components["parameters"]["TransactionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancelar um lançamento (estorna o caixa)
+         * @description A transação vira `VOIDED`, sua obrigação `CANCELLED`, e cada pagamento ganha um movimento de estorno
+         *     (`REVERSAL`, direção oposta, mesma conta e valor) datado de hoje no fuso da família (ou da data do pagamento,
+         *     se posterior). Os pagamentos ficam no histórico. Sai do consumo e dos compromissos; o dinheiro volta.
+         *     Cancelar de novo não muda nada. Conta arquivada envolvida → 422 `ACCOUNT_ARCHIVED` (restaure-a antes).
+         */
+        post: operations["voidTransaction"];
         delete?: never;
         options?: never;
         head?: never;
@@ -457,6 +495,30 @@ export interface paths {
          * @description Só `status=PLANNED`; caso contrário 422 `OBLIGATION_NOT_PLANNED`.
          */
         patch: operations["updateObligation"];
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/obligations/{obligationId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                obligationId: components["parameters"]["ObligationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancelar uma previsão ainda não paga
+         * @description `PLANNED` → `CANCELLED`: sai dos compromissos; nada mais muda. Já cancelada → 200 sem mudança. Com pagamento
+         *     (`CONFIRMED`) → 422 `OBLIGATION_NOT_PLANNED`: cancele o lançamento (`/transactions/{id}/void`).
+         */
+        post: operations["cancelObligation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/households/{householdId}/obligations/{obligationId}/payments": {
@@ -792,6 +854,25 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        TransactionPage: {
+            items: components["schemas"]["Transaction"][];
+            nextCursor: string | null;
+        };
+        UpdateTransactionRequest: {
+            description?: string;
+            /** @description "" limpa */
+            merchant?: string;
+            /** @description "" limpa */
+            notes?: string;
+            /**
+             * Format: uuid
+             * @description Categoria ativa do mesmo tipo
+             */
+            categoryId?: string;
+            scope?: components["schemas"]["Scope"];
+            /** @description Membro ativo (UUID); "" limpa (só com scope FAMILY) */
+            personMemberId?: string;
         };
         TransactionPayment: {
             method: components["schemas"]["AccountPaymentMethod"];
@@ -1678,6 +1759,49 @@ export interface operations {
             422: components["responses"]["Error"];
         };
     };
+    listTransactions: {
+        parameters: {
+            query?: {
+                /** @description Itens por página (padrão 25). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Valor opaco de `nextCursor` da página anterior. */
+                cursor?: components["parameters"]["Cursor"];
+                status?: "ACTIVE" | "VOIDED" | "ALL";
+                kind?: components["schemas"]["TransactionKind"];
+                /** @description Data a partir de (inclusive) */
+                from?: components["schemas"]["Date"];
+                /** @description Data até (inclusive) */
+                to?: components["schemas"]["Date"];
+                categoryId?: string;
+                accountId?: string;
+                personMemberId?: string;
+                scope?: components["schemas"]["Scope"];
+                paymentMethod?: components["schemas"]["AccountPaymentMethod"];
+                /** @description Texto (até 100 caracteres) */
+                q?: string;
+            };
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Página de lançamentos */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
     createTransaction: {
         parameters: {
             query?: never;
@@ -1742,6 +1866,76 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    updateTransaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                transactionId: components["parameters"]["TransactionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTransactionRequest"];
+            };
+        };
+        responses: {
+            /** @description Lançamento atualizado */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    voidTransaction: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+                 *     Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+                 *     Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+                 *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                transactionId: components["parameters"]["TransactionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lançamento cancelado (ou repetido com a mesma Idempotency-Key) */
+            200: {
+                headers: {
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     listObligations: {
@@ -1831,6 +2025,33 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    cancelObligation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                obligationId: components["parameters"]["ObligationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Previsão cancelada */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObligationDetail"];
+                };
+            };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];

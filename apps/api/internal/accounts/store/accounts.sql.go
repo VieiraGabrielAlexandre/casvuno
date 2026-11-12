@@ -166,6 +166,47 @@ func (q *Queries) GetAccount(ctx context.Context, arg GetAccountParams) (GetAcco
 	return i, err
 }
 
+const getMovementForReversal = `-- name: GetMovementForReversal :one
+SELECT m.id, m.account_id, m.direction, m.amount_cents, m.posted_on, m.kind, m.description,
+       EXISTS (SELECT 1 FROM account_movements r
+               WHERE r.household_id = m.household_id AND r.reversal_of_id = m.id) AS reversed
+FROM account_movements m
+WHERE m.household_id = $1 AND m.id = $2
+`
+
+type GetMovementForReversalParams struct {
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+type GetMovementForReversalRow struct {
+	ID          uuid.UUID
+	AccountID   uuid.UUID
+	Direction   string
+	AmountCents int64
+	PostedOn    time.Time
+	Kind        string
+	Description string
+	Reversed    bool
+}
+
+// A movement about to be reversed, with whether it already was (INV-18).
+func (q *Queries) GetMovementForReversal(ctx context.Context, arg GetMovementForReversalParams) (GetMovementForReversalRow, error) {
+	row := q.db.QueryRow(ctx, getMovementForReversal, arg.HouseholdID, arg.ID)
+	var i GetMovementForReversalRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Direction,
+		&i.AmountCents,
+		&i.PostedOn,
+		&i.Kind,
+		&i.Description,
+		&i.Reversed,
+	)
+	return i, err
+}
+
 const getTransfer = `-- name: GetTransfer :one
 SELECT t.id, t.from_account_id, fa.name AS from_account_name, t.to_account_id, ta.name AS to_account_name,
        t.amount_cents, t.posted_on, t.description, t.created_by_member_id, t.created_at
