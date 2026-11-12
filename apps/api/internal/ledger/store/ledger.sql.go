@@ -124,6 +124,48 @@ func (q *Queries) CreateObligationPayment(ctx context.Context, arg CreateObligat
 	return err
 }
 
+const createQuickTemplate = `-- name: CreateQuickTemplate :exec
+INSERT INTO quick_templates (id, household_id, member_id, label, kind, description, default_amount_cents, category_id,
+                             scope, person_member_id, payment_method, account_id, sort_order)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13)
+`
+
+type CreateQuickTemplateParams struct {
+	ID                 uuid.UUID
+	HouseholdID        uuid.UUID
+	MemberID           uuid.UUID
+	Label              string
+	Kind               string
+	Description        string
+	DefaultAmountCents *int64
+	CategoryID         uuid.UUID
+	Scope              string
+	PersonMemberID     *uuid.UUID
+	PaymentMethod      string
+	AccountID          *uuid.UUID
+	SortOrder          int32
+}
+
+func (q *Queries) CreateQuickTemplate(ctx context.Context, arg CreateQuickTemplateParams) error {
+	_, err := q.db.Exec(ctx, createQuickTemplate,
+		arg.ID,
+		arg.HouseholdID,
+		arg.MemberID,
+		arg.Label,
+		arg.Kind,
+		arg.Description,
+		arg.DefaultAmountCents,
+		arg.CategoryID,
+		arg.Scope,
+		arg.PersonMemberID,
+		arg.PaymentMethod,
+		arg.AccountID,
+		arg.SortOrder,
+	)
+	return err
+}
+
 const createTransaction = `-- name: CreateTransaction :exec
 INSERT INTO transactions (id, household_id, kind, scope, person_member_id, created_by_member_id, description,
                           merchant, notes, amount_cents, category_id, occurred_on, payment_method, account_id)
@@ -166,6 +208,24 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		arg.AccountID,
 	)
 	return err
+}
+
+const deleteQuickTemplate = `-- name: DeleteQuickTemplate :execrows
+DELETE FROM quick_templates WHERE household_id = $1 AND member_id = $2 AND id = $3
+`
+
+type DeleteQuickTemplateParams struct {
+	HouseholdID uuid.UUID
+	MemberID    uuid.UUID
+	ID          uuid.UUID
+}
+
+func (q *Queries) DeleteQuickTemplate(ctx context.Context, arg DeleteQuickTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteQuickTemplate, arg.HouseholdID, arg.MemberID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getObligation = `-- name: GetObligation :one
@@ -245,6 +305,56 @@ func (q *Queries) GetObligationIDByTransaction(ctx context.Context, arg GetOblig
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const getQuickTemplate = `-- name: GetQuickTemplate :one
+SELECT id, label, kind, description, default_amount_cents, category_id, scope, person_member_id, payment_method,
+       account_id, sort_order, created_at, updated_at
+FROM quick_templates
+WHERE household_id = $1 AND member_id = $2 AND id = $3
+`
+
+type GetQuickTemplateParams struct {
+	HouseholdID uuid.UUID
+	MemberID    uuid.UUID
+	ID          uuid.UUID
+}
+
+type GetQuickTemplateRow struct {
+	ID                 uuid.UUID
+	Label              string
+	Kind               string
+	Description        string
+	DefaultAmountCents *int64
+	CategoryID         uuid.UUID
+	Scope              string
+	PersonMemberID     *uuid.UUID
+	PaymentMethod      string
+	AccountID          *uuid.UUID
+	SortOrder          int32
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+func (q *Queries) GetQuickTemplate(ctx context.Context, arg GetQuickTemplateParams) (GetQuickTemplateRow, error) {
+	row := q.db.QueryRow(ctx, getQuickTemplate, arg.HouseholdID, arg.MemberID, arg.ID)
+	var i GetQuickTemplateRow
+	err := row.Scan(
+		&i.ID,
+		&i.Label,
+		&i.Kind,
+		&i.Description,
+		&i.DefaultAmountCents,
+		&i.CategoryID,
+		&i.Scope,
+		&i.PersonMemberID,
+		&i.PaymentMethod,
+		&i.AccountID,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getTransaction = `-- name: GetTransaction :one
@@ -459,6 +569,70 @@ func (q *Queries) ListObligations(ctx context.Context, arg ListObligationsParams
 	return items, nil
 }
 
+const listQuickTemplates = `-- name: ListQuickTemplates :many
+SELECT id, label, kind, description, default_amount_cents, category_id, scope, person_member_id, payment_method,
+       account_id, sort_order, created_at, updated_at
+FROM quick_templates
+WHERE household_id = $1 AND member_id = $2
+ORDER BY sort_order, lower(label), id
+`
+
+type ListQuickTemplatesParams struct {
+	HouseholdID uuid.UUID
+	MemberID    uuid.UUID
+}
+
+type ListQuickTemplatesRow struct {
+	ID                 uuid.UUID
+	Label              string
+	Kind               string
+	Description        string
+	DefaultAmountCents *int64
+	CategoryID         uuid.UUID
+	Scope              string
+	PersonMemberID     *uuid.UUID
+	PaymentMethod      string
+	AccountID          *uuid.UUID
+	SortOrder          int32
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// Quick templates are private to their member (I-46): every query filters by member too.
+func (q *Queries) ListQuickTemplates(ctx context.Context, arg ListQuickTemplatesParams) ([]ListQuickTemplatesRow, error) {
+	rows, err := q.db.Query(ctx, listQuickTemplates, arg.HouseholdID, arg.MemberID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListQuickTemplatesRow
+	for rows.Next() {
+		var i ListQuickTemplatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Label,
+			&i.Kind,
+			&i.Description,
+			&i.DefaultAmountCents,
+			&i.CategoryID,
+			&i.Scope,
+			&i.PersonMemberID,
+			&i.PaymentMethod,
+			&i.AccountID,
+			&i.SortOrder,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTransactions = `-- name: ListTransactions :many
 SELECT t.id, t.kind, t.scope, t.person_member_id, t.created_by_member_id, t.description, t.merchant, t.notes,
        t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.status, t.created_at,
@@ -474,33 +648,35 @@ WHERE t.household_id = $1
        OR t.category_id IN (SELECT c.id FROM categories c
                             WHERE c.household_id = t.household_id AND c.parent_id = $6::uuid))
   AND ($7::uuid IS NULL OR t.account_id = $7::uuid)
-  AND ($8::uuid IS NULL OR t.person_member_id = $8::uuid)
-  AND ($9::text IS NULL OR t.scope = $9::text)
-  AND ($10::text IS NULL OR t.payment_method = $10::text)
-  AND ($11::text IS NULL
+  AND ($8::uuid IS NULL OR t.created_by_member_id = $8::uuid)
+  AND ($9::uuid IS NULL OR t.person_member_id = $9::uuid)
+  AND ($10::text IS NULL OR t.scope = $10::text)
+  AND ($11::text IS NULL OR t.payment_method = $11::text)
+  AND ($12::text IS NULL
        OR strpos(lower(t.description || ' ' || COALESCE(t.merchant, '') || ' ' || COALESCE(t.notes, '')),
-                 lower($11::text)) > 0)
-  AND ($12::date IS NULL
-       OR (t.occurred_on, t.id) < ($12::date, $13::uuid))
+                 lower($12::text)) > 0)
+  AND ($13::date IS NULL
+       OR (t.occurred_on, t.id) < ($13::date, $14::uuid))
 ORDER BY t.occurred_on DESC, t.id DESC
-LIMIT $14
+LIMIT $15
 `
 
 type ListTransactionsParams struct {
-	HouseholdID     uuid.UUID
-	Status          *string
-	Kind            *string
-	FromDate        *time.Time
-	ToDate          *time.Time
-	CategoryID      *uuid.UUID
-	AccountID       *uuid.UUID
-	PersonMemberID  *uuid.UUID
-	Scope           *string
-	PaymentMethod   *string
-	Text            *string
-	AfterOccurredOn *time.Time
-	AfterID         *uuid.UUID
-	RowLimit        int32
+	HouseholdID       uuid.UUID
+	Status            *string
+	Kind              *string
+	FromDate          *time.Time
+	ToDate            *time.Time
+	CategoryID        *uuid.UUID
+	AccountID         *uuid.UUID
+	CreatedByMemberID *uuid.UUID
+	PersonMemberID    *uuid.UUID
+	Scope             *string
+	PaymentMethod     *string
+	Text              *string
+	AfterOccurredOn   *time.Time
+	AfterID           *uuid.UUID
+	RowLimit          int32
 }
 
 type ListTransactionsRow struct {
@@ -524,7 +700,8 @@ type ListTransactionsRow struct {
 
 // Transactions newest first, keyset-paginated on (occurred_on, id) (RN-025). Filters are
 // optional; category_id also matches its subcategories; text searches description, merchant
-// and notes (case-insensitive substring); status NULL means any status.
+// and notes (case-insensitive substring); status NULL means any status; created_by_member_id
+// serves "repeat last" (createdBy=me).
 func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsParams) ([]ListTransactionsRow, error) {
 	rows, err := q.db.Query(ctx, listTransactions,
 		arg.HouseholdID,
@@ -534,6 +711,7 @@ func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsPara
 		arg.ToDate,
 		arg.CategoryID,
 		arg.AccountID,
+		arg.CreatedByMemberID,
 		arg.PersonMemberID,
 		arg.Scope,
 		arg.PaymentMethod,
@@ -577,6 +755,16 @@ func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsPara
 	return items, nil
 }
 
+const lockMemberTemplates = `-- name: LockMemberTemplates :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+// Serialises template creation per member, so the per-member limit holds under concurrency.
+func (q *Queries) LockMemberTemplates(ctx context.Context, lockKey string) error {
+	_, err := q.db.Exec(ctx, lockMemberTemplates, lockKey)
+	return err
+}
+
 const lockObligation = `-- name: LockObligation :one
 SELECT id FROM obligations WHERE household_id = $1 AND id = $2 FOR UPDATE
 `
@@ -589,6 +777,25 @@ type LockObligationParams struct {
 // Serialises payments and edits of one obligation (ADR 0007): the caller re-reads it after.
 func (q *Queries) LockObligation(ctx context.Context, arg LockObligationParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, lockObligation, arg.HouseholdID, arg.ID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockQuickTemplate = `-- name: LockQuickTemplate :one
+SELECT id FROM quick_templates
+WHERE household_id = $1 AND member_id = $2 AND id = $3
+FOR UPDATE
+`
+
+type LockQuickTemplateParams struct {
+	HouseholdID uuid.UUID
+	MemberID    uuid.UUID
+	ID          uuid.UUID
+}
+
+func (q *Queries) LockQuickTemplate(ctx context.Context, arg LockQuickTemplateParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockQuickTemplate, arg.HouseholdID, arg.MemberID, arg.ID)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -609,6 +816,29 @@ func (q *Queries) LockTransaction(ctx context.Context, arg LockTransactionParams
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const quickTemplateStats = `-- name: QuickTemplateStats :one
+SELECT count(*) AS total, COALESCE(max(sort_order) + 1, 0)::integer AS next_sort_order
+FROM quick_templates
+WHERE household_id = $1 AND member_id = $2
+`
+
+type QuickTemplateStatsParams struct {
+	HouseholdID uuid.UUID
+	MemberID    uuid.UUID
+}
+
+type QuickTemplateStatsRow struct {
+	Total         int64
+	NextSortOrder int32
+}
+
+func (q *Queries) QuickTemplateStats(ctx context.Context, arg QuickTemplateStatsParams) (QuickTemplateStatsRow, error) {
+	row := q.db.QueryRow(ctx, quickTemplateStats, arg.HouseholdID, arg.MemberID)
+	var i QuickTemplateStatsRow
+	err := row.Scan(&i.Total, &i.NextSortOrder)
+	return i, err
 }
 
 const updateObligationClassification = `-- name: UpdateObligationClassification :exec
@@ -660,6 +890,47 @@ func (q *Queries) UpdatePlannedObligation(ctx context.Context, arg UpdatePlanned
 		arg.DueOn,
 		arg.Description,
 		arg.HouseholdID,
+		arg.ID,
+	)
+	return err
+}
+
+const updateQuickTemplate = `-- name: UpdateQuickTemplate :exec
+UPDATE quick_templates
+SET label = $1, description = $2, default_amount_cents = $3,
+    category_id = $4, scope = $5, person_member_id = $6,
+    payment_method = $7, account_id = $8, sort_order = $9, updated_at = now()
+WHERE household_id = $10 AND member_id = $11 AND id = $12
+`
+
+type UpdateQuickTemplateParams struct {
+	Label              string
+	Description        string
+	DefaultAmountCents *int64
+	CategoryID         uuid.UUID
+	Scope              string
+	PersonMemberID     *uuid.UUID
+	PaymentMethod      string
+	AccountID          *uuid.UUID
+	SortOrder          int32
+	HouseholdID        uuid.UUID
+	MemberID           uuid.UUID
+	ID                 uuid.UUID
+}
+
+func (q *Queries) UpdateQuickTemplate(ctx context.Context, arg UpdateQuickTemplateParams) error {
+	_, err := q.db.Exec(ctx, updateQuickTemplate,
+		arg.Label,
+		arg.Description,
+		arg.DefaultAmountCents,
+		arg.CategoryID,
+		arg.Scope,
+		arg.PersonMemberID,
+		arg.PaymentMethod,
+		arg.AccountID,
+		arg.SortOrder,
+		arg.HouseholdID,
+		arg.MemberID,
 		arg.ID,
 	)
 	return err

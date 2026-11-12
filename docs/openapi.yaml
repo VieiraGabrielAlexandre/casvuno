@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.9.0
+  version: 0.10.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -20,6 +20,7 @@ tags:
   - name: transfers
   - name: transactions
   - name: obligations
+  - name: quick-templates
 
 paths:
   /health:
@@ -575,6 +576,10 @@ paths:
         - name: personMemberId
           in: query
           schema: { type: string, format: uuid }
+        - name: createdBy
+          in: query
+          description: 'Autor do lançamento: `me` (quem chama) ou ID de membro. "Repetir último" = `createdBy=me&limit=1`.'
+          schema: { type: string }
         - name: scope
           in: query
           schema: { $ref: "#/components/schemas/Scope" }
@@ -830,6 +835,84 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
 
+  /api/v1/households/{householdId}/quick-templates:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+    get:
+      tags: [quick-templates]
+      operationId: listQuickTemplates
+      summary: Meus favoritos de lançamento (na ordem escolhida)
+      description: Cada favorito é só de quem o criou; os outros membros não o veem. Até 50, sem paginação.
+      responses:
+        "200":
+          description: Favoritos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuickTemplateList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [quick-templates]
+      operationId: createQuickTemplate
+      summary: Criar favorito
+      description: |
+        Categoria ativa do mesmo tipo, conta ativa (opcional) e pessoa membro ativo, todas da família. Não lança nada:
+        o lançamento é feito com `POST /transactions` a partir dos campos do favorito. Limite: 422 `TEMPLATE_LIMIT`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateQuickTemplateRequest" }
+      responses:
+        "201":
+          description: Favorito criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuickTemplate" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/quick-templates/{templateId}:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/TemplateId"
+    patch:
+      tags: [quick-templates]
+      operationId: updateQuickTemplate
+      summary: Editar favorito
+      description: |
+        Campo ausente fica como está; `""` limpa `personMemberId`/`accountId`; `defaultAmountCents: 0` limpa o valor.
+        O tipo não muda. Favorito de outro membro → 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateQuickTemplateRequest" }
+      responses:
+        "200":
+          description: Favorito atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuickTemplate" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [quick-templates]
+      operationId: deleteQuickTemplate
+      summary: Excluir favorito
+      description: Excluir um favorito não afeta nenhum lançamento.
+      responses:
+        "204": { description: Favorito excluído }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
 security:
   - sessionCookie: []
 
@@ -854,6 +937,12 @@ components:
 
     ObligationId:
       name: obligationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+    TemplateId:
+      name: templateId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -1314,6 +1403,65 @@ components:
         status: { type: string, enum: [ACTIVE, VOIDED] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+
+    QuickTemplate:
+      type: object
+      additionalProperties: false
+      required: [id, label, kind, description, defaultAmountCents, categoryId, scope, personMemberId, paymentMethod, accountId, sortOrder, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string }
+        kind: { $ref: "#/components/schemas/TransactionKind" }
+        description: { type: string }
+        defaultAmountCents: { type: [integer, "null"], minimum: 1, maximum: 1000000000000000 }
+        categoryId: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/Scope" }
+        personMemberId: { type: [string, "null"], format: uuid }
+        paymentMethod: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        accountId: { type: [string, "null"], format: uuid }
+        sortOrder: { type: integer, minimum: 0, maximum: 10000 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    QuickTemplateList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/QuickTemplate" }
+
+    CreateQuickTemplateRequest:
+      type: object
+      additionalProperties: false
+      required: [label, kind, description, categoryId, scope, paymentMethod]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 60, description: "Nome do botão (ex.: Café)" }
+        kind: { $ref: "#/components/schemas/TransactionKind" }
+        description: { type: string, minLength: 1, maxLength: 200 }
+        defaultAmountCents: { type: integer, minimum: 1, maximum: 1000000000000000, description: "Opcional; sem valor, o app pede o valor" }
+        categoryId: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/Scope" }
+        personMemberId: { type: string, format: uuid, description: Obrigatório se PERSONAL }
+        paymentMethod: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        accountId: { type: string, format: uuid }
+        sortOrder: { type: integer, minimum: 0, maximum: 10000, description: Padrão = depois do último }
+
+    UpdateQuickTemplateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        label: { type: string, minLength: 1, maxLength: 60 }
+        description: { type: string, minLength: 1, maxLength: 200 }
+        defaultAmountCents: { type: integer, minimum: 0, maximum: 1000000000000000, description: 0 limpa }
+        categoryId: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/Scope" }
+        personMemberId: { type: string, description: 'UUID de membro ativo; "" limpa' }
+        paymentMethod: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        accountId: { type: string, description: 'UUID de conta ativa; "" limpa' }
+        sortOrder: { type: integer, minimum: 0, maximum: 10000 }
 
     TransactionPage:
       type: object

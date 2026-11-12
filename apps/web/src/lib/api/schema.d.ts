@@ -547,6 +547,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/households/{householdId}/quick-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Meus favoritos de lançamento (na ordem escolhida)
+         * @description Cada favorito é só de quem o criou; os outros membros não o veem. Até 50, sem paginação.
+         */
+        get: operations["listQuickTemplates"];
+        put?: never;
+        /**
+         * Criar favorito
+         * @description Categoria ativa do mesmo tipo, conta ativa (opcional) e pessoa membro ativo, todas da família. Não lança nada:
+         *     o lançamento é feito com `POST /transactions` a partir dos campos do favorito. Limite: 422 `TEMPLATE_LIMIT`.
+         */
+        post: operations["createQuickTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/quick-templates/{templateId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                templateId: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Excluir favorito
+         * @description Excluir um favorito não afeta nenhum lançamento.
+         */
+        delete: operations["deleteQuickTemplate"];
+        options?: never;
+        head?: never;
+        /**
+         * Editar favorito
+         * @description Campo ausente fica como está; `""` limpa `personMemberId`/`accountId`; `defaultAmountCents: 0` limpa o valor.
+         *     O tipo não muda. Favorito de outro membro → 404.
+         */
+        patch: operations["updateQuickTemplate"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -855,6 +910,66 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        QuickTemplate: {
+            /** Format: uuid */
+            id: string;
+            label: string;
+            kind: components["schemas"]["TransactionKind"];
+            description: string;
+            defaultAmountCents: number | null;
+            /** Format: uuid */
+            categoryId: string;
+            scope: components["schemas"]["Scope"];
+            /** Format: uuid */
+            personMemberId: string | null;
+            paymentMethod: components["schemas"]["AccountPaymentMethod"];
+            /** Format: uuid */
+            accountId: string | null;
+            sortOrder: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        QuickTemplateList: {
+            items: components["schemas"]["QuickTemplate"][];
+        };
+        CreateQuickTemplateRequest: {
+            /** @description Nome do botão (ex.: Café) */
+            label: string;
+            kind: components["schemas"]["TransactionKind"];
+            description: string;
+            /** @description Opcional; sem valor, o app pede o valor */
+            defaultAmountCents?: number;
+            /** Format: uuid */
+            categoryId: string;
+            scope: components["schemas"]["Scope"];
+            /**
+             * Format: uuid
+             * @description Obrigatório se PERSONAL
+             */
+            personMemberId?: string;
+            paymentMethod: components["schemas"]["AccountPaymentMethod"];
+            /** Format: uuid */
+            accountId?: string;
+            /** @description Padrão = depois do último */
+            sortOrder?: number;
+        };
+        UpdateQuickTemplateRequest: {
+            label?: string;
+            description?: string;
+            /** @description 0 limpa */
+            defaultAmountCents?: number;
+            /** Format: uuid */
+            categoryId?: string;
+            scope?: components["schemas"]["Scope"];
+            /** @description UUID de membro ativo; "" limpa */
+            personMemberId?: string;
+            paymentMethod?: components["schemas"]["AccountPaymentMethod"];
+            /** @description UUID de conta ativa; "" limpa */
+            accountId?: string;
+            sortOrder?: number;
+        };
         TransactionPage: {
             items: components["schemas"]["Transaction"][];
             nextCursor: string | null;
@@ -1014,6 +1129,7 @@ export interface components {
          */
         IdempotencyKey: string;
         ObligationId: string;
+        TemplateId: string;
         TransactionId: string;
         AccountId: string;
         /** @description Itens por página (padrão 25). */
@@ -1775,6 +1891,8 @@ export interface operations {
                 categoryId?: string;
                 accountId?: string;
                 personMemberId?: string;
+                /** @description Autor do lançamento: `me` (quem chama) ou ID de membro. "Repetir último" = `createdBy=me&limit=1`. */
+                createdBy?: string;
                 scope?: components["schemas"]["Scope"];
                 paymentMethod?: components["schemas"]["AccountPaymentMethod"];
                 /** @description Texto (até 100 caracteres) */
@@ -2097,6 +2215,117 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listQuickTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Favoritos */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuickTemplateList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createQuickTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateQuickTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Favorito criado */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuickTemplate"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    deleteQuickTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                templateId: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Favorito excluído */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateQuickTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                templateId: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateQuickTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Favorito atualizado */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuickTemplate"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
             422: components["responses"]["Error"];
         };
     };

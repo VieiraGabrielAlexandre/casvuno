@@ -40,6 +40,11 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/obligations/{obligationId}", h.getObligation)
 	r.Patch("/obligations/{obligationId}", h.updateObligation)
 	r.Post("/obligations/{obligationId}/cancel", h.cancelObligation)
+
+	r.Get("/quick-templates", h.listTemplates)
+	r.Post("/quick-templates", h.createTemplate)
+	r.Patch("/quick-templates/{templateId}", h.updateTemplate)
+	r.Delete("/quick-templates/{templateId}", h.deleteTemplate)
 	r.With(h.idem.Require).Post("/obligations/{obligationId}/payments", h.payObligation) // ADR 0007
 }
 
@@ -229,12 +234,12 @@ type transactionCursor struct {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	q, err := parseTransactionQuery(r)
+	m, _ := authctx.MembershipFrom(r.Context())
+	q, err := parseTransactionQuery(r, m)
 	if err != nil {
 		httpx.WriteError(w, r, h.log, err)
 		return
 	}
-	m, _ := authctx.MembershipFrom(r.Context())
 	list, next, err := h.svc.ListTransactions(r.Context(), m, q)
 	if err != nil {
 		httpx.WriteError(w, r, h.log, err)
@@ -251,7 +256,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, page)
 }
 
-func parseTransactionQuery(r *http.Request) (TransactionQuery, error) {
+func parseTransactionQuery(r *http.Request, m authctx.Membership) (TransactionQuery, error) {
 	limit, err := httpx.ParseLimit(r)
 	if err != nil {
 		return TransactionQuery{}, err
@@ -291,6 +296,12 @@ func parseTransactionQuery(r *http.Request) (TransactionQuery, error) {
 	}
 	if q.From != nil && q.To != nil && q.From.After(*q.To) {
 		return q, validation("from", "before_or_equal_to", "A data inicial deve ser anterior à final.")
+	}
+	// createdBy=me (or a member ID): "repeat last" asks for createdBy=me&limit=1.
+	if raw := values.Get("createdBy"); raw == "me" {
+		q.CreatedBy = &m.MemberID
+	} else if q.CreatedBy, err = parseOptionalID("createdBy", raw); err != nil {
+		return q, err
 	}
 	if text := values.Get("q"); text != "" {
 		q.Text = &text

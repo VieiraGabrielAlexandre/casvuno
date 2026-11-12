@@ -43,6 +43,7 @@ type TransactionQuery struct {
 	CategoryID     *uuid.UUID
 	AccountID      *uuid.UUID
 	PersonMemberID *uuid.UUID
+	CreatedBy      *uuid.UUID // author member; "repeat last" uses the caller's own
 	Scope          *string
 	PaymentMethod  *string
 	Text           *string
@@ -66,8 +67,9 @@ type TransactionUpdate struct {
 func (s *Service) ListTransactions(ctx context.Context, m authctx.Membership, q TransactionQuery) ([]Transaction, *TransactionPosition, error) {
 	params := store.ListTransactionsParams{
 		HouseholdID: m.HouseholdID, Kind: q.Kind, FromDate: q.From, ToDate: q.To, CategoryID: q.CategoryID,
-		AccountID: q.AccountID, PersonMemberID: q.PersonMemberID, Scope: q.Scope, PaymentMethod: q.PaymentMethod,
-		RowLimit: int32(q.Limit + 1), //nolint:gosec // limit validated (<= 100)
+		AccountID: q.AccountID, PersonMemberID: q.PersonMemberID, CreatedByMemberID: q.CreatedBy, Scope: q.Scope,
+		PaymentMethod: q.PaymentMethod,
+		RowLimit:      int32(q.Limit + 1), //nolint:gosec // limit validated (<= 100)
 	}
 	switch q.Status {
 	case "", TxActive:
