@@ -438,8 +438,14 @@ export interface paths {
          *     movimento de caixa (saída para despesa, entrada para receita). A resposta traz `transaction` e `obligation`.
          *     `mode=PLANNED`: grava só a obrigação prevista (`status=PLANNED`, compromisso, ainda não consumo), com `dueOn`;
          *     `transaction` vem `null`. O primeiro pagamento (`POST /obligations/{id}/payments`) a confirma.
+         *     `method=CREDIT_CARD` (só despesa): grava a transação (consumo pelo valor total, uma vez) e `installments`
+         *     parcelas (padrão 1, até 60, mínimo R$ 0,01 cada; as primeiras `amountCents % N` recebem o centavo extra)
+         *     nas faturas do cartão: a 1ª na fatura cujo ciclo contém `occurredOn` (compra no dia do fechamento vai para a
+         *     próxima) e a k-ésima na (k−1)-ésima seguinte. Faturas que faltam são criadas. Fatura já fechada é pulada e a
+         *     resposta traz `allocationShifted: true`. Sem obrigação (`obligation: null`) e sem caixa até pagar a fatura.
+         *     Cartão desconhecido, de outra família ou arquivado → 422 `CARD_NOT_FOUND`/`CARD_ARCHIVED`.
          *     O valor conta uma vez para a família, quem quer que tenha pago ou consumido (sem divisão entre membros).
-         *     `scope` e `personMemberId` servem só para filtro. Cartão de crédito vem depois.
+         *     `scope` e `personMemberId` servem só para filtro.
          */
         post: operations["createTransaction"];
         delete?: never;
@@ -492,6 +498,7 @@ export interface paths {
          *     (`REVERSAL`, direção oposta, mesma conta e valor) datado de hoje no fuso da família (ou da data do pagamento,
          *     se posterior). Os pagamentos ficam no histórico. Sai do consumo e dos compromissos; o dinheiro volta.
          *     Cancelar de novo não muda nada. Conta arquivada envolvida → 422 `ACCOUNT_ARCHIVED` (restaure-a antes).
+         *     Compra no cartão ainda não pode ser cancelada → 422 `CARD_PURCHASE_VOID_UNAVAILABLE`.
          */
         post: operations["voidTransaction"];
         delete?: never;
@@ -978,6 +985,11 @@ export interface components {
         Scope: "PERSONAL" | "FAMILY";
         /** @enum {string} */
         AccountPaymentMethod: "PIX" | "DEBIT" | "CASH" | "BANK_TRANSFER" | "BOLETO" | "OTHER";
+        /**
+         * @description Meio de pagamento de um lançamento; `CREDIT_CARD` é compra no cartão (sem conta).
+         * @enum {string}
+         */
+        PaymentMethod: "PIX" | "DEBIT" | "CASH" | "BANK_TRANSFER" | "BOLETO" | "CREDIT_CARD" | "OTHER";
         Transaction: {
             /** Format: uuid */
             id: string;
@@ -994,9 +1006,17 @@ export interface components {
             /** Format: uuid */
             categoryId: string;
             occurredOn: components["schemas"]["Date"];
-            paymentMethod: components["schemas"]["AccountPaymentMethod"];
-            /** Format: uuid */
-            accountId: string;
+            paymentMethod: components["schemas"]["PaymentMethod"];
+            /**
+             * Format: uuid
+             * @description Nulo em compra no cartão
+             */
+            accountId: string | null;
+            /**
+             * Format: uuid
+             * @description Preenchido só em compra no cartão
+             */
+            creditCardId: string | null;
             /** @enum {string} */
             status: "ACTIVE" | "VOIDED";
             /** Format: date-time */
@@ -1084,16 +1104,26 @@ export interface components {
             personMemberId?: string;
         };
         TransactionPayment: {
-            method: components["schemas"]["AccountPaymentMethod"];
+            method: components["schemas"]["PaymentMethod"];
             /**
              * Format: uuid
-             * @description Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro. Obrigatória em IMMEDIATE; opcional em PLANNED.
+             * @description Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro. Obrigatória em IMMEDIATE; opcional em PLANNED; proibida em CREDIT_CARD.
              */
             accountId?: string;
-            /** @enum {string} */
-            mode: "IMMEDIATE" | "PLANNED";
-            /** @description Vencimento; obrigatório em PLANNED e proibido em IMMEDIATE. */
+            /**
+             * @description Obrigatório fora do cartão. Em CREDIT_CARD, ausente ou IMMEDIATE (compra no cartão não é prevista).
+             * @enum {string}
+             */
+            mode?: "IMMEDIATE" | "PLANNED";
+            /** @description Vencimento; obrigatório em PLANNED e proibido em IMMEDIATE e CREDIT_CARD (o vencimento vem da fatura). */
             dueOn?: components["schemas"]["Date"];
+            /**
+             * Format: uuid
+             * @description Cartão ativo da família; obrigatório em CREDIT_CARD e proibido nos demais meios.
+             */
+            cardId?: string;
+            /** @description Número de parcelas em CREDIT_CARD (padrão 1); cada parcela tem pelo menos R$ 0,01. */
+            installments?: number;
         };
         CreateTransactionRequest: {
             kind: components["schemas"]["TransactionKind"];
@@ -1104,9 +1134,9 @@ export interface components {
              */
             personMemberId?: string;
             description: string;
-            /** @description Só em IMMEDIATE */
+            /** @description Só em IMMEDIATE e CREDIT_CARD */
             merchant?: string;
-            /** @description Só em IMMEDIATE */
+            /** @description Só em IMMEDIATE e CREDIT_CARD */
             notes?: string;
             amountCents: number;
             /**
@@ -1186,7 +1216,20 @@ export interface components {
         EntryCreated: {
             /** @description Nulo em lançamento previsto (ainda não é consumo) */
             transaction: components["schemas"]["Transaction"] | null;
-            obligation: components["schemas"]["Obligation"];
+            /** @description Nulo em compra no cartão (o compromisso é a fatura) */
+            obligation: components["schemas"]["Obligation"] | null;
+            /** @description Parcelas da compra no cartão, em ordem; vazio nos demais meios */
+            installments: components["schemas"]["PlacedInstallment"][];
+            /** @description true quando uma fatura já fechada foi pulada e as parcelas foram para as faturas seguintes */
+            allocationShifted: boolean;
+        };
+        PlacedInstallment: {
+            number: number;
+            amountCents: number;
+            /** Format: uuid */
+            invoiceId: string;
+            closingOn: components["schemas"]["Date"];
+            dueOn: components["schemas"]["Date"];
         };
         PayObligationRequest: {
             amountCents: number;
@@ -2101,11 +2144,13 @@ export interface operations {
                 to?: components["schemas"]["Date"];
                 categoryId?: string;
                 accountId?: string;
+                /** @description Compras deste cartão */
+                creditCardId?: string;
                 personMemberId?: string;
                 /** @description Autor do lançamento: `me` (quem chama) ou ID de membro. "Repetir último" = `createdBy=me&limit=1`. */
                 createdBy?: string;
                 scope?: components["schemas"]["Scope"];
-                paymentMethod?: components["schemas"]["AccountPaymentMethod"];
+                paymentMethod?: components["schemas"]["PaymentMethod"];
                 /** @description Texto (até 100 caracteres) */
                 q?: string;
             };

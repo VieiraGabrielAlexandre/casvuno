@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.11.0
+  version: 0.12.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -660,6 +660,10 @@ paths:
         - name: accountId
           in: query
           schema: { type: string, format: uuid }
+        - name: creditCardId
+          in: query
+          description: Compras deste cartão
+          schema: { type: string, format: uuid }
         - name: personMemberId
           in: query
           schema: { type: string, format: uuid }
@@ -672,7 +676,7 @@ paths:
           schema: { $ref: "#/components/schemas/Scope" }
         - name: paymentMethod
           in: query
-          schema: { $ref: "#/components/schemas/AccountPaymentMethod" }
+          schema: { $ref: "#/components/schemas/PaymentMethod" }
         - name: q
           in: query
           description: Texto (até 100 caracteres)
@@ -695,8 +699,14 @@ paths:
         movimento de caixa (saída para despesa, entrada para receita). A resposta traz `transaction` e `obligation`.
         `mode=PLANNED`: grava só a obrigação prevista (`status=PLANNED`, compromisso, ainda não consumo), com `dueOn`;
         `transaction` vem `null`. O primeiro pagamento (`POST /obligations/{id}/payments`) a confirma.
+        `method=CREDIT_CARD` (só despesa): grava a transação (consumo pelo valor total, uma vez) e `installments`
+        parcelas (padrão 1, até 60, mínimo R$ 0,01 cada; as primeiras `amountCents % N` recebem o centavo extra)
+        nas faturas do cartão: a 1ª na fatura cujo ciclo contém `occurredOn` (compra no dia do fechamento vai para a
+        próxima) e a k-ésima na (k−1)-ésima seguinte. Faturas que faltam são criadas. Fatura já fechada é pulada e a
+        resposta traz `allocationShifted: true`. Sem obrigação (`obligation: null`) e sem caixa até pagar a fatura.
+        Cartão desconhecido, de outra família ou arquivado → 422 `CARD_NOT_FOUND`/`CARD_ARCHIVED`.
         O valor conta uma vez para a família, quem quer que tenha pago ou consumido (sem divisão entre membros).
-        `scope` e `personMemberId` servem só para filtro. Cartão de crédito vem depois.
+        `scope` e `personMemberId` servem só para filtro.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -773,6 +783,7 @@ paths:
         (`REVERSAL`, direção oposta, mesma conta e valor) datado de hoje no fuso da família (ou da data do pagamento,
         se posterior). Os pagamentos ficam no histórico. Sai do consumo e dos compromissos; o dinheiro volta.
         Cancelar de novo não muda nada. Conta arquivada envolvida → 422 `ACCOUNT_ARCHIVED` (restaure-a antes).
+        Compra no cartão ainda não pode ser cancelada → 422 `CARD_PURCHASE_VOID_UNAVAILABLE`.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       responses:
@@ -1524,10 +1535,15 @@ components:
       type: string
       enum: [PIX, DEBIT, CASH, BANK_TRANSFER, BOLETO, OTHER]
 
+    PaymentMethod:
+      type: string
+      description: Meio de pagamento de um lançamento; `CREDIT_CARD` é compra no cartão (sem conta).
+      enum: [PIX, DEBIT, CASH, BANK_TRANSFER, BOLETO, CREDIT_CARD, OTHER]
+
     Transaction:
       type: object
       additionalProperties: false
-      required: [id, kind, scope, personMemberId, createdByMemberId, description, merchant, notes, amountCents, categoryId, occurredOn, paymentMethod, accountId, status, createdAt, updatedAt]
+      required: [id, kind, scope, personMemberId, createdByMemberId, description, merchant, notes, amountCents, categoryId, occurredOn, paymentMethod, accountId, creditCardId, status, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         kind: { $ref: "#/components/schemas/TransactionKind" }
@@ -1540,8 +1556,9 @@ components:
         amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
         categoryId: { type: string, format: uuid }
         occurredOn: { $ref: "#/components/schemas/Date" }
-        paymentMethod: { $ref: "#/components/schemas/AccountPaymentMethod" }
-        accountId: { type: string, format: uuid }
+        paymentMethod: { $ref: "#/components/schemas/PaymentMethod" }
+        accountId: { type: [string, "null"], format: uuid, description: Nulo em compra no cartão }
+        creditCardId: { type: [string, "null"], format: uuid, description: Preenchido só em compra no cartão }
         status: { type: string, enum: [ACTIVE, VOIDED] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -1631,17 +1648,29 @@ components:
     TransactionPayment:
       type: object
       additionalProperties: false
-      required: [method, mode]
+      required: [method]
       properties:
-        method: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        method: { $ref: "#/components/schemas/PaymentMethod" }
         accountId:
           type: string
           format: uuid
-          description: Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro. Obrigatória em IMMEDIATE; opcional em PLANNED.
-        mode: { type: string, enum: [IMMEDIATE, PLANNED] }
+          description: Conta ativa da família de onde sai (despesa) ou onde entra (receita) o dinheiro. Obrigatória em IMMEDIATE; opcional em PLANNED; proibida em CREDIT_CARD.
+        mode:
+          type: string
+          enum: [IMMEDIATE, PLANNED]
+          description: Obrigatório fora do cartão. Em CREDIT_CARD, ausente ou IMMEDIATE (compra no cartão não é prevista).
         dueOn:
           allOf: [{ $ref: "#/components/schemas/Date" }]
-          description: Vencimento; obrigatório em PLANNED e proibido em IMMEDIATE.
+          description: Vencimento; obrigatório em PLANNED e proibido em IMMEDIATE e CREDIT_CARD (o vencimento vem da fatura).
+        cardId:
+          type: string
+          format: uuid
+          description: Cartão ativo da família; obrigatório em CREDIT_CARD e proibido nos demais meios.
+        installments:
+          type: integer
+          minimum: 1
+          maximum: 60
+          description: Número de parcelas em CREDIT_CARD (padrão 1); cada parcela tem pelo menos R$ 0,01.
 
     CreateTransactionRequest:
       type: object
@@ -1652,8 +1681,8 @@ components:
         scope: { $ref: "#/components/schemas/Scope" }
         personMemberId: { type: string, format: uuid, description: Membro ativo; obrigatório se PERSONAL }
         description: { type: string, minLength: 1, maxLength: 200 }
-        merchant: { type: string, maxLength: 120, description: Só em IMMEDIATE }
-        notes: { type: string, maxLength: 1000, description: Só em IMMEDIATE }
+        merchant: { type: string, maxLength: 120, description: Só em IMMEDIATE e CREDIT_CARD }
+        notes: { type: string, maxLength: 1000, description: Só em IMMEDIATE e CREDIT_CARD }
         amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
         categoryId: { type: string, format: uuid, description: Categoria ativa do mesmo tipo (despesa/receita) }
         occurredOn:
@@ -1728,14 +1757,36 @@ components:
     EntryCreated:
       type: object
       additionalProperties: false
-      required: [transaction, obligation]
+      required: [transaction, obligation, installments, allocationShifted]
       properties:
         transaction:
           description: Nulo em lançamento previsto (ainda não é consumo)
           oneOf:
             - { $ref: "#/components/schemas/Transaction" }
             - { type: "null" }
-        obligation: { $ref: "#/components/schemas/Obligation" }
+        obligation:
+          description: Nulo em compra no cartão (o compromisso é a fatura)
+          oneOf:
+            - { $ref: "#/components/schemas/Obligation" }
+            - { type: "null" }
+        installments:
+          type: array
+          description: Parcelas da compra no cartão, em ordem; vazio nos demais meios
+          items: { $ref: "#/components/schemas/PlacedInstallment" }
+        allocationShifted:
+          type: boolean
+          description: true quando uma fatura já fechada foi pulada e as parcelas foram para as faturas seguintes
+
+    PlacedInstallment:
+      type: object
+      additionalProperties: false
+      required: [number, amountCents, invoiceId, closingOn, dueOn]
+      properties:
+        number: { type: integer, minimum: 1, maximum: 60 }
+        amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        invoiceId: { type: string, format: uuid }
+        closingOn: { $ref: "#/components/schemas/Date" }
+        dueOn: { $ref: "#/components/schemas/Date" }
 
     PayObligationRequest:
       type: object

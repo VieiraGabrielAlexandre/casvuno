@@ -61,7 +61,8 @@ type transactionResponse struct {
 	CategoryID        string    `json:"categoryId"`
 	OccurredOn        string    `json:"occurredOn"`
 	PaymentMethod     string    `json:"paymentMethod"`
-	AccountID         string    `json:"accountId"`
+	AccountID         *string   `json:"accountId"`
+	CreditCardID      *string   `json:"creditCardId"`
 	Status            string    `json:"status"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
@@ -72,8 +73,8 @@ func toResponse(t Transaction) transactionResponse {
 		ID: t.ID.String(), Kind: t.Kind, Scope: t.Scope, PersonMemberID: uuidString(t.PersonMemberID),
 		CreatedByMemberID: t.CreatedByMemberID.String(), Description: t.Description, Merchant: t.Merchant,
 		Notes: t.Notes, AmountCents: t.AmountCents, CategoryID: t.CategoryID.String(),
-		OccurredOn: kernel.FormatDate(t.OccurredOn), PaymentMethod: t.PaymentMethod, AccountID: t.AccountID.String(),
-		Status: t.Status, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		OccurredOn: kernel.FormatDate(t.OccurredOn), PaymentMethod: t.PaymentMethod, AccountID: uuidString(t.AccountID),
+		CreditCardID: uuidString(t.CreditCardID), Status: t.Status, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 }
 
@@ -143,19 +144,32 @@ func toDetailResponse(d ObligationDetail, today time.Time) obligationDetailRespo
 	return out
 }
 
-// entryResponse: an immediate entry has its transaction; a forecast has none yet.
+// entryResponse: an immediate entry has its transaction and obligation; a forecast has no
+// transaction yet; a card purchase has no obligation, and its installments instead.
 type entryResponse struct {
-	Transaction *transactionResponse `json:"transaction"`
-	Obligation  obligationResponse   `json:"obligation"`
+	Transaction       *transactionResponse  `json:"transaction"`
+	Obligation        *obligationResponse   `json:"obligation"`
+	Installments      []installmentResponse `json:"installments"`
+	AllocationShifted bool                  `json:"allocationShifted"`
+}
+
+type installmentResponse struct {
+	Number      int    `json:"number"`
+	AmountCents int64  `json:"amountCents"`
+	InvoiceID   string `json:"invoiceId"`
+	ClosingOn   string `json:"closingOn"`
+	DueOn       string `json:"dueOn"`
 }
 
 // The payment object is validated by the service, which reports nested field names
 // ("payment.accountId") that the web form can map.
 type paymentRequest struct {
-	Method    string `json:"method"`
-	AccountID string `json:"accountId,omitempty"`
-	Mode      string `json:"mode"`
-	DueOn     string `json:"dueOn,omitempty"`
+	Method       string `json:"method"`
+	AccountID    string `json:"accountId,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	DueOn        string `json:"dueOn,omitempty"`
+	CardID       string `json:"cardId,omitempty"`
+	Installments int    `json:"installments,omitempty"`
 }
 
 type createRequest struct {
@@ -182,8 +196,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, h.log, err)
 		return
 	}
-	payment := Payment{Method: req.Payment.Method, Mode: req.Payment.Mode}
+	payment := Payment{Method: req.Payment.Method, Mode: req.Payment.Mode, Installments: req.Payment.Installments}
 	if payment.AccountID, err = parseOptionalID("payment.accountId", req.Payment.AccountID); err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	if payment.CardID, err = parseOptionalID("payment.cardId", req.Payment.CardID); err != nil {
 		httpx.WriteError(w, r, h.log, err)
 		return
 	}
@@ -206,7 +224,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, h.log, err)
 		return
 	}
-	out := entryResponse{Obligation: toObligationResponse(e.Obligation, h.svc.Today(m))}
+	out := entryResponse{Installments: make([]installmentResponse, 0, len(e.Installments)), AllocationShifted: e.AllocationShifted}
+	if e.Obligation != nil {
+		o := toObligationResponse(*e.Obligation, h.svc.Today(m))
+		out.Obligation = &o
+	}
+	for _, i := range e.Installments {
+		out.Installments = append(out.Installments, installmentResponse{
+			Number: i.Number, AmountCents: i.AmountCents, InvoiceID: i.InvoiceID.String(),
+			ClosingOn: kernel.FormatDate(i.ClosingOn), DueOn: kernel.FormatDate(i.DueOn),
+		})
+	}
 	if e.Transaction != nil {
 		t := toResponse(*e.Transaction)
 		out.Transaction = &t
@@ -270,7 +298,7 @@ func parseTransactionQuery(r *http.Request, m authctx.Membership) (TransactionQu
 	}{
 		{"kind", []string{KindExpense, KindIncome}, &q.Kind},
 		{"scope", []string{ScopePersonal, ScopeFamily}, &q.Scope},
-		{"paymentMethod", []string{"PIX", "DEBIT", "CASH", "BANK_TRANSFER", "BOLETO", "OTHER"}, &q.PaymentMethod},
+		{"paymentMethod", []string{"PIX", "DEBIT", "CASH", "BANK_TRANSFER", "BOLETO", MethodCreditCard, "OTHER"}, &q.PaymentMethod},
 	}
 	for _, e := range enums {
 		if v := values.Get(e.field); v != "" {
@@ -280,7 +308,9 @@ func parseTransactionQuery(r *http.Request, m authctx.Membership) (TransactionQu
 			*e.dst = &v
 		}
 	}
-	for field, dst := range map[string]**uuid.UUID{"categoryId": &q.CategoryID, "accountId": &q.AccountID, "personMemberId": &q.PersonMemberID} {
+	for field, dst := range map[string]**uuid.UUID{
+		"categoryId": &q.CategoryID, "accountId": &q.AccountID, "creditCardId": &q.CreditCardID, "personMemberId": &q.PersonMemberID,
+	} {
 		if *dst, err = parseOptionalID(field, values.Get(field)); err != nil {
 			return q, err
 		}

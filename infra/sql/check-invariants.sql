@@ -28,15 +28,61 @@ WHERE r.direction = o.direction OR r.amount_cents <> o.amount_cents OR r.account
 UNION ALL
 
 -- INV-03 (outside the card): each transaction has exactly one obligation, of the matching
--- kind and amount, and that obligation is not a forecast. (F4.3: card purchases have none.)
+-- kind and amount, and that obligation is not a forecast.
 SELECT 'INV-03', t.id::text, 'transaction without exactly one matching obligation'
 FROM transactions t
-WHERE (SELECT count(*) FROM obligations o WHERE o.household_id = t.household_id AND o.transaction_id = t.id) <> 1
+WHERE t.credit_card_id IS NULL
+  AND ((SELECT count(*) FROM obligations o WHERE o.household_id = t.household_id AND o.transaction_id = t.id) <> 1
    OR NOT EXISTS (
         SELECT 1 FROM obligations o
         WHERE o.household_id = t.household_id AND o.transaction_id = t.id
           AND o.amount_cents = t.amount_cents AND o.status <> 'PLANNED'
-          AND o.kind = CASE t.kind WHEN 'EXPENSE' THEN 'PAYABLE' ELSE 'RECEIVABLE' END)
+          AND o.kind = CASE t.kind WHEN 'EXPENSE' THEN 'PAYABLE' ELSE 'RECEIVABLE' END))
+
+UNION ALL
+
+-- INV-03 (card): a card purchase has installments and no obligation (the invoice is the
+-- commitment, I-04).
+SELECT 'INV-03', t.id::text, 'card purchase with an obligation or without installments'
+FROM transactions t
+WHERE t.credit_card_id IS NOT NULL
+  AND (EXISTS (SELECT 1 FROM obligations o WHERE o.household_id = t.household_id AND o.transaction_id = t.id)
+       OR NOT EXISTS (SELECT 1 FROM card_installments i WHERE i.household_id = t.household_id AND i.transaction_id = t.id))
+
+UNION ALL
+
+-- INV-02: the installments of a card purchase are exactly its split: N rows numbered 1..N
+-- (UNIQUE + CHECK), summing to the amount, the first amount % N carrying the extra cent.
+SELECT 'INV-02', t.id::text, 'installments do not split the purchase amount'
+FROM transactions t
+JOIN card_installments i ON i.household_id = t.household_id AND i.transaction_id = t.id
+GROUP BY t.id, t.amount_cents
+HAVING count(*) <> min(i.installment_total) OR min(i.installment_total) <> max(i.installment_total)
+    OR sum(i.amount_cents) <> t.amount_cents
+    OR bool_or(i.amount_cents <> t.amount_cents / i.installment_total
+                                + CASE WHEN i.installment_number <= t.amount_cents % i.installment_total THEN 1 ELSE 0 END)
+
+UNION ALL
+
+-- ADR 0003: the first installment never goes to an invoice that closed on or before the
+-- purchase date, and each next installment goes to a later invoice.
+SELECT 'ADR-0003', i.id::text, 'installment placed on the wrong invoice'
+FROM card_installments i
+JOIN transactions t ON t.household_id = i.household_id AND t.id = i.transaction_id
+JOIN card_invoices v ON v.household_id = i.household_id AND v.id = i.card_invoice_id
+WHERE (i.installment_number = 1 AND v.closing_on <= t.occurred_on)
+   OR EXISTS (SELECT 1 FROM card_installments p
+              JOIN card_invoices pv ON pv.household_id = p.household_id AND pv.id = p.card_invoice_id
+              WHERE p.household_id = i.household_id AND p.transaction_id = i.transaction_id
+                AND p.installment_number = i.installment_number - 1 AND pv.cycle_start_on >= v.cycle_start_on)
+
+UNION ALL
+
+-- ADR 0003: the invoices of a card never overlap ([cycle_start_on, closing_on)).
+SELECT 'ADR-0003', a.id::text, 'invoices of the same card overlap'
+FROM card_invoices a
+JOIN card_invoices b ON b.credit_card_id = a.credit_card_id AND b.id <> a.id
+WHERE a.cycle_start_on < b.closing_on AND b.cycle_start_on < a.closing_on
 
 UNION ALL
 

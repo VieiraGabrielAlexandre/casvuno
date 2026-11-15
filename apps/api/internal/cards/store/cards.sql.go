@@ -53,6 +53,67 @@ func (q *Queries) CreateCard(ctx context.Context, arg CreateCardParams) error {
 	return err
 }
 
+const createInstallment = `-- name: CreateInstallment :exec
+INSERT INTO card_installments (id, household_id, transaction_id, credit_card_id, card_invoice_id, installment_number,
+                               installment_total, amount_cents)
+VALUES ($1, $2, $3, $4, $5, $6,
+        $7, $8)
+`
+
+type CreateInstallmentParams struct {
+	ID                uuid.UUID
+	HouseholdID       uuid.UUID
+	TransactionID     uuid.UUID
+	CreditCardID      uuid.UUID
+	CardInvoiceID     uuid.UUID
+	InstallmentNumber int16
+	InstallmentTotal  int16
+	AmountCents       int64
+}
+
+func (q *Queries) CreateInstallment(ctx context.Context, arg CreateInstallmentParams) error {
+	_, err := q.db.Exec(ctx, createInstallment,
+		arg.ID,
+		arg.HouseholdID,
+		arg.TransactionID,
+		arg.CreditCardID,
+		arg.CardInvoiceID,
+		arg.InstallmentNumber,
+		arg.InstallmentTotal,
+		arg.AmountCents,
+	)
+	return err
+}
+
+const createInvoice = `-- name: CreateInvoice :exec
+INSERT INTO card_invoices (id, household_id, credit_card_id, cycle_start_on, closing_on, due_on)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (credit_card_id, cycle_start_on) DO NOTHING
+`
+
+type CreateInvoiceParams struct {
+	ID           uuid.UUID
+	HouseholdID  uuid.UUID
+	CreditCardID uuid.UUID
+	CycleStartOn time.Time
+	ClosingOn    time.Time
+	DueOn        time.Time
+}
+
+// Find-or-create (ADR 0003): the card lock already serialises purchases, so a conflict only
+// means the invoice exists; the caller reads it back and checks its dates.
+func (q *Queries) CreateInvoice(ctx context.Context, arg CreateInvoiceParams) error {
+	_, err := q.db.Exec(ctx, createInvoice,
+		arg.ID,
+		arg.HouseholdID,
+		arg.CreditCardID,
+		arg.CycleStartOn,
+		arg.ClosingOn,
+		arg.DueOn,
+	)
+	return err
+}
+
 const getCard = `-- name: GetCard :one
 SELECT id, name, holder_member_id, last_four, limit_cents, closing_day, due_day, is_active, created_at, updated_at
 FROM credit_cards
@@ -93,6 +154,85 @@ func (q *Queries) GetCard(ctx context.Context, arg GetCardParams) (GetCardRow, e
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getInvoiceByStart = `-- name: GetInvoiceByStart :one
+SELECT id, cycle_start_on, closing_on, due_on, status
+FROM card_invoices
+WHERE household_id = $1 AND credit_card_id = $2 AND cycle_start_on = $3
+`
+
+type GetInvoiceByStartParams struct {
+	HouseholdID  uuid.UUID
+	CreditCardID uuid.UUID
+	CycleStartOn time.Time
+}
+
+type GetInvoiceByStartRow struct {
+	ID           uuid.UUID
+	CycleStartOn time.Time
+	ClosingOn    time.Time
+	DueOn        time.Time
+	Status       string
+}
+
+func (q *Queries) GetInvoiceByStart(ctx context.Context, arg GetInvoiceByStartParams) (GetInvoiceByStartRow, error) {
+	row := q.db.QueryRow(ctx, getInvoiceByStart, arg.HouseholdID, arg.CreditCardID, arg.CycleStartOn)
+	var i GetInvoiceByStartRow
+	err := row.Scan(
+		&i.ID,
+		&i.CycleStartOn,
+		&i.ClosingOn,
+		&i.DueOn,
+		&i.Status,
+	)
+	return i, err
+}
+
+const listCardInvoices = `-- name: ListCardInvoices :many
+SELECT id, cycle_start_on, closing_on, due_on, status
+FROM card_invoices
+WHERE household_id = $1 AND credit_card_id = $2
+ORDER BY cycle_start_on
+`
+
+type ListCardInvoicesParams struct {
+	HouseholdID  uuid.UUID
+	CreditCardID uuid.UUID
+}
+
+type ListCardInvoicesRow struct {
+	ID           uuid.UUID
+	CycleStartOn time.Time
+	ClosingOn    time.Time
+	DueOn        time.Time
+	Status       string
+}
+
+func (q *Queries) ListCardInvoices(ctx context.Context, arg ListCardInvoicesParams) ([]ListCardInvoicesRow, error) {
+	rows, err := q.db.Query(ctx, listCardInvoices, arg.HouseholdID, arg.CreditCardID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCardInvoicesRow
+	for rows.Next() {
+		var i ListCardInvoicesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CycleStartOn,
+			&i.ClosingOn,
+			&i.DueOn,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listCards = `-- name: ListCards :many
@@ -166,6 +306,52 @@ func (q *Queries) LockCard(ctx context.Context, arg LockCardParams) (uuid.UUID, 
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockCardForPurchase = `-- name: LockCardForPurchase :one
+SELECT closing_day, due_day, is_active
+FROM credit_cards
+WHERE household_id = $1 AND id = $2
+FOR UPDATE
+`
+
+type LockCardForPurchaseParams struct {
+	HouseholdID uuid.UUID
+	ID          uuid.UUID
+}
+
+type LockCardForPurchaseRow struct {
+	ClosingDay int16
+	DueDay     int16
+	IsActive   bool
+}
+
+// Locks the card for a purchase (ADR 0007): serialises the find-or-create of its invoices.
+func (q *Queries) LockCardForPurchase(ctx context.Context, arg LockCardForPurchaseParams) (LockCardForPurchaseRow, error) {
+	row := q.db.QueryRow(ctx, lockCardForPurchase, arg.HouseholdID, arg.ID)
+	var i LockCardForPurchaseRow
+	err := row.Scan(&i.ClosingDay, &i.DueDay, &i.IsActive)
+	return i, err
+}
+
+const lockOpenInvoices = `-- name: LockOpenInvoices :exec
+SELECT id
+FROM card_invoices
+WHERE household_id = $1 AND credit_card_id = $2 AND status = 'OPEN'
+ORDER BY cycle_start_on
+FOR UPDATE
+`
+
+type LockOpenInvoicesParams struct {
+	HouseholdID  uuid.UUID
+	CreditCardID uuid.UUID
+}
+
+// Locks the card's OPEN invoices (oldest first) so none of them is closed while a purchase
+// places installments on it. An invoice closed meanwhile is re-checked and left out.
+func (q *Queries) LockOpenInvoices(ctx context.Context, arg LockOpenInvoicesParams) error {
+	_, err := q.db.Exec(ctx, lockOpenInvoices, arg.HouseholdID, arg.CreditCardID)
+	return err
 }
 
 const updateCard = `-- name: UpdateCard :exec

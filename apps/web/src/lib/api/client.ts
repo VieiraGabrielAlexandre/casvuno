@@ -23,6 +23,8 @@ export type CreateTransferRequest =
 export type TransactionKind = components["schemas"]["TransactionKind"];
 export type Scope = components["schemas"]["Scope"];
 export type PaymentMethod = components["schemas"]["AccountPaymentMethod"];
+/** A transaction's method: an account method or CREDIT_CARD (card purchase, F4.3). */
+export type TransactionPaymentMethod = components["schemas"]["PaymentMethod"];
 export type Transaction = components["schemas"]["Transaction"];
 export type CreateTransactionRequest =
   components["schemas"]["CreateTransactionRequest"];

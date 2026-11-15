@@ -28,6 +28,7 @@ type transactionDTO struct {
 	OccurredOn        string  `json:"occurredOn"`
 	PaymentMethod     string  `json:"paymentMethod"`
 	AccountID         string  `json:"accountId"`
+	CreditCardID      *string `json:"creditCardId"`
 	Status            string  `json:"status"`
 }
 
@@ -280,7 +281,8 @@ func TestTransactionValidation(t *testing.T) {
 		{"archived account", with(map[string]any{"payment": payment("PIX", archivedAcc.ID, "IMMEDIATE")}), 422, "ACCOUNT_ARCHIVED", "payment.accountId"},
 		{"unknown account", with(map[string]any{"payment": payment("PIX", uuid.NewString(), "IMMEDIATE")}), 422, "ACCOUNT_NOT_FOUND", "payment.accountId"},
 		{"missing account", with(map[string]any{"payment": payment("PIX", "", "IMMEDIATE")}), 400, "VALIDATION_ERROR", "payment.accountId"},
-		{"credit card not yet supported", with(map[string]any{"payment": payment("CREDIT_CARD", acc.ID, "IMMEDIATE")}), 400, "VALIDATION_ERROR", "payment.method"},
+		{"unknown method", with(map[string]any{"payment": payment("CHEQUE", acc.ID, "IMMEDIATE")}), 400, "VALIDATION_ERROR", "payment.method"},
+		{"credit card without card", with(map[string]any{"payment": payment("CREDIT_CARD", acc.ID, "IMMEDIATE")}), 400, "VALIDATION_ERROR", "payment.cardId"},
 		{"unknown mode", with(map[string]any{"payment": payment("PIX", acc.ID, "LATER")}), 400, "VALIDATION_ERROR", "payment.mode"},
 		{"planned without due date", with(map[string]any{"payment": payment("PIX", acc.ID, "PLANNED")}), 400, "VALIDATION_ERROR", "payment.dueOn"},
 		{"immediate with due date", with(map[string]any{"payment": map[string]any{"method": "PIX", "accountId": acc.ID, "mode": "IMMEDIATE", "dueOn": "2026-11-20"}}), 400, "VALIDATION_ERROR", "payment.dueOn"},

@@ -35,6 +35,13 @@ const (
 	ModeImmediate = "IMMEDIATE"
 	// ModePlanned: a forecast (PLANNED obligation only); its first payment confirms it (I-08).
 	ModePlanned = "PLANNED"
+
+	// MethodCreditCard: a purchase on a card (RN-009): the transaction and N installments on
+	// the card's invoices, no obligation and no cash until the invoice is paid (F4.5).
+	MethodCreditCard = "CREDIT_CARD"
+	// maxInstallments mirrors cards/domain.MaxInstallments (RN-010, I-32): the ledger checks
+	// the request shape before taking any lock; the cards module checks it again on Split.
+	maxInstallments = 60
 )
 
 // Obligation lifecycle (I-02) and sources.
@@ -47,7 +54,7 @@ const (
 	sourceManualForecast = "MANUAL_FORECAST"
 )
 
-// Payment methods through an account (I-07). CREDIT_CARD arrives with card purchases (F4.3).
+// Payment methods through an account (I-07). CREDIT_CARD is the card's (MethodCreditCard).
 var accountMethods = map[string]bool{
 	"PIX": true, "DEBIT": true, "CASH": true, "BANK_TRANSFER": true, "BOLETO": true, "OTHER": true,
 }
@@ -79,6 +86,33 @@ type CashMovement struct {
 	Field       string // request field that carried the account, for error details
 }
 
+// CardPurchase is a card purchase whose transaction the ledger has just written.
+type CardPurchase struct {
+	CardID        uuid.UUID
+	TransactionID uuid.UUID
+	OccurredOn    time.Time
+	AmountCents   int64
+	Installments  int
+}
+
+// CardInstallment is one installment of a card purchase and the invoice it went to.
+type CardInstallment struct {
+	Number      int
+	AmountCents int64
+	InvoiceID   uuid.UUID
+	ClosingOn   time.Time
+	DueOn       time.Time
+}
+
+// Cards is what the ledger needs from the cards module. RequireActiveCard locks the card
+// until the caller's transaction ends and rejects unknown or archived cards with 422 on
+// field. PlaceInstallments splits the purchase and writes its installments on the card's
+// invoices (ADR 0003), creating missing invoices; shifted reports a skipped CLOSED invoice.
+type Cards interface {
+	RequireActiveCard(ctx context.Context, householdID, cardID uuid.UUID, field string) error
+	PlaceInstallments(ctx context.Context, householdID uuid.UUID, p CardPurchase) (installments []CardInstallment, shifted bool, err error)
+}
+
 // Cash is what the ledger needs from the accounts module. Every method locks the accounts
 // it touches until the caller's transaction ends and rejects archived accounts with 422
 // ACCOUNT_ARCHIVED (PostCash and RequireActiveAccount also unknown ones, on the given field).
@@ -103,19 +137,24 @@ type Transaction struct {
 	CategoryID        uuid.UUID
 	OccurredOn        time.Time
 	PaymentMethod     string
-	AccountID         uuid.UUID
+	AccountID         *uuid.UUID // nil for a card purchase
+	CreditCardID      *uuid.UUID // set only for a card purchase
 	Status            string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
 
 // Payment says how an entry is settled: IMMEDIATE (through AccountID, now) or PLANNED (due
-// on DueOn; AccountID optional, chosen at payment time if absent). CREDIT_CARD: F4.3.
+// on DueOn; AccountID optional, chosen at payment time if absent). A CREDIT_CARD purchase
+// goes to CardID in Installments (default 1) and has no mode: it is consumption now and a
+// commitment through the invoices.
 type Payment struct {
-	Method    string
-	AccountID *uuid.UUID
-	Mode      string
-	DueOn     *time.Time
+	Method       string
+	AccountID    *uuid.UUID
+	Mode         string
+	DueOn        *time.Time
+	CardID       *uuid.UUID
+	Installments int
 }
 
 // CreateInput is a new income or expense entry.
@@ -133,10 +172,14 @@ type CreateInput struct {
 }
 
 // Entry is the result of Create: an immediate entry has its transaction and its paid
-// obligation; a forecast has only the PLANNED obligation (no consumption yet).
+// obligation; a forecast has only the PLANNED obligation (no consumption yet); a card
+// purchase has its transaction and installments, and no obligation (INV-03).
 type Entry struct {
-	Transaction *Transaction
-	Obligation  Obligation
+	Transaction  *Transaction
+	Obligation   *Obligation
+	Installments []CardInstallment
+	// AllocationShifted: a CLOSED invoice was skipped (I-15).
+	AllocationShifted bool
 }
 
 // Service implements ledger use cases.
@@ -147,11 +190,12 @@ type Service struct {
 	categories CategoryChecker
 	members    MemberChecker
 	cash       Cash
+	cards      Cards
 }
 
 // NewService builds the ledger service.
-func NewService(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, categories CategoryChecker, members MemberChecker, cash Cash) *Service {
-	return &Service{tx: tx, clock: clk, audit: rec, categories: categories, members: members, cash: cash}
+func NewService(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, categories CategoryChecker, members MemberChecker, cash Cash, cards Cards) *Service {
+	return &Service{tx: tx, clock: clk, audit: rec, categories: categories, members: members, cash: cash, cards: cards}
 }
 
 var errNotFound = kernel.NewError(kernel.ErrNotFound, "TRANSACTION_NOT_FOUND", "Lançamento não encontrado.")
@@ -165,6 +209,9 @@ var errNotFound = kernel.NewError(kernel.ErrNotFound, "TRANSACTION_NOT_FOUND", "
 // PLANNED (I-08): only a PLANNED obligation holding the draft of the future transaction. It
 // is a commitment, not consumption, until its first payment (PayObligation).
 // Merchant and notes of a forecast can be set after its confirmation (Update).
+//
+// CREDIT_CARD (RN-009, ADR 0003): the transaction and its installments on the card's
+// invoices; consumption now, commitment through the invoices, no cash (T05, INV-02/03).
 func (s *Service) Create(ctx context.Context, m authctx.Membership, in CreateInput) (Entry, error) {
 	in, err := normalize(in)
 	if err != nil {
@@ -175,23 +222,32 @@ func (s *Service) Create(ctx context.Context, m authctx.Membership, in CreateInp
 		return Entry{}, err
 	}
 	obligationID := ids[1]
-	var txID *uuid.UUID
+	var (
+		txID          *uuid.UUID
+		hasObligation = true
+		out           Entry
+	)
 
 	err = s.tx.WithinTx(ctx, func(ctx context.Context) error {
 		if err := s.checkReferences(ctx, m.HouseholdID, in); err != nil {
 			return err
 		}
-		if in.Payment.Mode == ModePlanned {
+		switch {
+		case in.Payment.Method == MethodCreditCard:
+			txID, hasObligation = &ids[0], false
+			out.Installments, out.AllocationShifted, err = s.createCardPurchase(ctx, m, ids[0], in)
+			return err
+		case in.Payment.Mode == ModePlanned:
 			return s.createForecast(ctx, m, obligationID, in)
+		default:
+			txID = &ids[0]
+			return s.createImmediate(ctx, m, ids[0], obligationID, ids[2], in)
 		}
-		txID = &ids[0]
-		return s.createImmediate(ctx, m, ids[0], obligationID, ids[2], in)
 	})
 	if err != nil {
 		return Entry{}, err
 	}
 
-	var out Entry
 	if txID != nil {
 		t, err := s.Get(ctx, m, *txID)
 		if err != nil {
@@ -199,10 +255,51 @@ func (s *Service) Create(ctx context.Context, m authctx.Membership, in CreateInp
 		}
 		out.Transaction = &t
 	}
-	if out.Obligation, err = s.obligation(ctx, m, obligationID); err != nil {
-		return Entry{}, err
+	if hasObligation {
+		o, err := s.obligation(ctx, m, obligationID)
+		if err != nil {
+			return Entry{}, err
+		}
+		out.Obligation = &o
 	}
 	return out, nil
+}
+
+// createCardPurchase writes a purchase on the card: the transaction (method CREDIT_CARD, no
+// account) and, through the cards module, one installment per invoice. No obligation and no
+// cash movement: the invoice is the commitment and its payment the cash (ADR 0002, INV-03).
+func (s *Service) createCardPurchase(ctx context.Context, m authctx.Membership, txID uuid.UUID, in CreateInput) ([]CardInstallment, bool, error) {
+	cardID := *in.Payment.CardID
+	// Lock the card before the insert below, whose foreign key takes KEY SHARE on it (a lock
+	// upgrade afterwards would deadlock concurrent purchases, ADR 0007).
+	if err := s.cards.RequireActiveCard(ctx, m.HouseholdID, cardID, "payment.cardId"); err != nil {
+		return nil, false, err
+	}
+	if err := store.New(s.tx.Conn(ctx)).CreateTransaction(ctx, store.CreateTransactionParams{
+		ID: txID, HouseholdID: m.HouseholdID, Kind: in.Kind, Scope: in.Scope, PersonMemberID: in.PersonMemberID,
+		CreatedByMemberID: m.MemberID, Description: in.Description, Merchant: in.Merchant, Notes: in.Notes,
+		AmountCents: in.AmountCents, CategoryID: in.CategoryID, OccurredOn: in.OccurredOn,
+		PaymentMethod: MethodCreditCard, CreditCardID: &cardID,
+	}); err != nil {
+		return nil, false, fmt.Errorf("create transaction: %w", err)
+	}
+	installments, shifted, err := s.cards.PlaceInstallments(ctx, m.HouseholdID, CardPurchase{
+		CardID: cardID, TransactionID: txID, OccurredOn: in.OccurredOn, AmountCents: in.AmountCents,
+		Installments: in.Payment.Installments,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	// No amount or description in the audit metadata (ADR 0012).
+	err = s.audit.Record(ctx, audit.Event{
+		HouseholdID: m.HouseholdID, ActorUserID: m.UserID,
+		EntityType: "transaction", EntityID: txID, Action: "transaction.created",
+		Metadata: map[string]any{
+			"kind": in.Kind, "method": MethodCreditCard, "creditCardId": cardID.String(),
+			"installments": in.Payment.Installments, "allocationShifted": shifted,
+		},
+	})
+	return installments, shifted, err
 }
 
 func (s *Service) createImmediate(ctx context.Context, m authctx.Membership, txID, obligationID, paymentID uuid.UUID, in CreateInput) error {
@@ -222,7 +319,7 @@ func (s *Service) createImmediate(ctx context.Context, m authctx.Membership, txI
 		ID: txID, HouseholdID: m.HouseholdID, Kind: in.Kind, Scope: in.Scope, PersonMemberID: in.PersonMemberID,
 		CreatedByMemberID: m.MemberID, Description: in.Description, Merchant: in.Merchant, Notes: in.Notes,
 		AmountCents: in.AmountCents, CategoryID: in.CategoryID, OccurredOn: in.OccurredOn,
-		PaymentMethod: in.Payment.Method, AccountID: accountID,
+		PaymentMethod: in.Payment.Method, AccountID: &accountID,
 	}); err != nil {
 		return fmt.Errorf("create transaction: %w", err)
 	}
@@ -361,8 +458,17 @@ func normalize(in CreateInput) (CreateInput, error) {
 	if in.Notes, err = optionalText("notes", in.Notes, maxNotesLen); err != nil {
 		return in, err
 	}
+	if in.Payment.Method == MethodCreditCard {
+		return normalizeCardPurchase(in)
+	}
 	if !accountMethods[in.Payment.Method] {
-		return in, validation("payment.method", "oneof=PIX DEBIT CASH BANK_TRANSFER BOLETO OTHER", "Meio de pagamento inválido.")
+		return in, validation("payment.method", "oneof=PIX DEBIT CASH BANK_TRANSFER BOLETO CREDIT_CARD OTHER", "Meio de pagamento inválido.")
+	}
+	if in.Payment.CardID != nil {
+		return in, validation("payment.cardId", "only_for_credit_card", "Cartão só vale para pagamento no crédito.")
+	}
+	if in.Payment.Installments != 0 {
+		return in, validation("payment.installments", "only_for_credit_card", "Parcelas só valem para pagamento no crédito.")
 	}
 	switch in.Payment.Mode {
 	case ModeImmediate:
@@ -386,6 +492,38 @@ func normalize(in CreateInput) (CreateInput, error) {
 	default:
 		return in, validation("payment.mode", "oneof=IMMEDIATE PLANNED", "Modo de pagamento inválido.")
 	}
+	return in, nil
+}
+
+// normalizeCardPurchase validates the payment of a card purchase: an expense on a card, in
+// 1..60 installments of at least one cent each (RN-010, I-48), with no account, mode or due
+// date (the invoices give the due dates).
+func normalizeCardPurchase(in CreateInput) (CreateInput, error) {
+	p := in.Payment
+	switch {
+	case in.Kind != KindExpense:
+		return in, validation("payment.method", "expense_only", "Receita não pode ser lançada no cartão de crédito.")
+	case p.CardID == nil:
+		return in, validation("payment.cardId", "required", "Escolha o cartão.")
+	case p.AccountID != nil:
+		return in, validation("payment.accountId", "not_for_credit_card", "Compra no cartão não usa conta.")
+	case p.DueOn != nil:
+		return in, validation("payment.dueOn", "not_for_credit_card", "O vencimento da compra no cartão vem da fatura.")
+	case p.Mode != "" && p.Mode != ModeImmediate:
+		return in, validation("payment.mode", "not_for_credit_card", "Compra no cartão não pode ser prevista.")
+	}
+	if in.Payment.Installments == 0 {
+		in.Payment.Installments = 1
+	}
+	if n := in.Payment.Installments; n < 1 || n > maxInstallments {
+		return in, kernel.NewError(kernel.ErrValidation, "INVALID_INSTALLMENTS", "O número de parcelas deve ficar entre 1 e 60.",
+			kernel.FieldError{Field: "payment.installments", Reason: "range"})
+	}
+	if in.AmountCents < int64(in.Payment.Installments) {
+		return in, kernel.NewError(kernel.ErrValidation, "INSTALLMENT_TOO_SMALL", "Cada parcela precisa ter pelo menos R$ 0,01.",
+			kernel.FieldError{Field: "payment.installments", Reason: "too_small"})
+	}
+	in.Payment.Mode = ""
 	return in, nil
 }
 

@@ -21,6 +21,7 @@ import {
   categoryOptions,
   kindLabel,
   methodLabel,
+  transactionMethodLabel,
   namesById,
   paymentMethods,
   scopeLabel,
@@ -357,7 +358,9 @@ function TransactionRow({
           <span className="truncate text-sm text-muted-foreground">
             {formatDate(t.occurredOn)} ·{" "}
             {lookups.categoryName.get(t.categoryId) ?? "Categoria"} ·{" "}
-            {lookups.accountName.get(t.accountId) ?? "Conta"}
+            {t.creditCardId
+              ? "Cartão de crédito"
+              : (lookups.accountName.get(t.accountId ?? "") ?? "Conta")}
             {voided ? " · Cancelado" : ""}
           </span>
         </span>
@@ -373,7 +376,7 @@ function TransactionRow({
         <div className="flex flex-col gap-2 rounded-lg bg-muted/50 p-3 text-sm">
           <p>
             {kindLabel[t.kind]} ({income ? "receita" : "consumo"}) ·{" "}
-            {methodLabel[t.paymentMethod]} · {scopeLabel[t.scope]}
+            {transactionMethodLabel[t.paymentMethod]} · {scopeLabel[t.scope]}
             {person ? ` · ${person}` : ""}
           </p>
           {t.merchant && <p>Estabelecimento: {t.merchant}</p>}
@@ -387,19 +390,24 @@ function TransactionRow({
               >
                 Editar
               </Button>
-              <Link
-                href={`/entry?household=${householdId}&correct=${t.id}`}
-                className="inline-flex h-7 items-center rounded-lg border px-2.5 text-[0.8rem] font-medium hover:bg-muted"
-              >
-                Corrigir valor ou data
-              </Link>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => setMode("void")}
-              >
-                Cancelar lançamento
-              </Button>
+              {/* Card purchases are corrected or cancelled with the invoices (F4.6). */}
+              {!t.creditCardId && (
+                <>
+                  <Link
+                    href={`/entry?household=${householdId}&correct=${t.id}`}
+                    className="inline-flex h-7 items-center rounded-lg border px-2.5 text-[0.8rem] font-medium hover:bg-muted"
+                  >
+                    Corrigir valor ou data
+                  </Link>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => setMode("void")}
+                  >
+                    Cancelar lançamento
+                  </Button>
+                </>
+              )}
             </div>
           )}
         </div>

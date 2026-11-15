@@ -168,9 +168,11 @@ func (q *Queries) CreateQuickTemplate(ctx context.Context, arg CreateQuickTempla
 
 const createTransaction = `-- name: CreateTransaction :exec
 INSERT INTO transactions (id, household_id, kind, scope, person_member_id, created_by_member_id, description,
-                          merchant, notes, amount_cents, category_id, occurred_on, payment_method, account_id)
+                          merchant, notes, amount_cents, category_id, occurred_on, payment_method, account_id,
+                          credit_card_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11, $12, $13, $14)
+        $8, $9, $10, $11, $12, $13,
+        $14, $15)
 `
 
 type CreateTransactionParams struct {
@@ -187,7 +189,8 @@ type CreateTransactionParams struct {
 	CategoryID        uuid.UUID
 	OccurredOn        time.Time
 	PaymentMethod     string
-	AccountID         uuid.UUID
+	AccountID         *uuid.UUID
+	CreditCardID      *uuid.UUID
 }
 
 func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionParams) error {
@@ -206,6 +209,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		arg.OccurredOn,
 		arg.PaymentMethod,
 		arg.AccountID,
+		arg.CreditCardID,
 	)
 	return err
 }
@@ -359,7 +363,7 @@ func (q *Queries) GetQuickTemplate(ctx context.Context, arg GetQuickTemplatePara
 
 const getTransaction = `-- name: GetTransaction :one
 SELECT id, kind, scope, person_member_id, created_by_member_id, description, merchant, notes, amount_cents,
-       category_id, occurred_on, payment_method, account_id, status, created_at, updated_at
+       category_id, occurred_on, payment_method, account_id, credit_card_id, status, created_at, updated_at
 FROM transactions
 WHERE household_id = $1 AND id = $2
 `
@@ -382,7 +386,8 @@ type GetTransactionRow struct {
 	CategoryID        uuid.UUID
 	OccurredOn        time.Time
 	PaymentMethod     string
-	AccountID         uuid.UUID
+	AccountID         *uuid.UUID
+	CreditCardID      *uuid.UUID
 	Status            string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -405,6 +410,7 @@ func (q *Queries) GetTransaction(ctx context.Context, arg GetTransactionParams) 
 		&i.OccurredOn,
 		&i.PaymentMethod,
 		&i.AccountID,
+		&i.CreditCardID,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -635,8 +641,8 @@ func (q *Queries) ListQuickTemplates(ctx context.Context, arg ListQuickTemplates
 
 const listTransactions = `-- name: ListTransactions :many
 SELECT t.id, t.kind, t.scope, t.person_member_id, t.created_by_member_id, t.description, t.merchant, t.notes,
-       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.status, t.created_at,
-       t.updated_at
+       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.credit_card_id, t.status,
+       t.created_at, t.updated_at
 FROM transactions t
 WHERE t.household_id = $1
   AND ($2::text IS NULL OR t.status = $2::text)
@@ -648,17 +654,18 @@ WHERE t.household_id = $1
        OR t.category_id IN (SELECT c.id FROM categories c
                             WHERE c.household_id = t.household_id AND c.parent_id = $6::uuid))
   AND ($7::uuid IS NULL OR t.account_id = $7::uuid)
-  AND ($8::uuid IS NULL OR t.created_by_member_id = $8::uuid)
-  AND ($9::uuid IS NULL OR t.person_member_id = $9::uuid)
-  AND ($10::text IS NULL OR t.scope = $10::text)
-  AND ($11::text IS NULL OR t.payment_method = $11::text)
-  AND ($12::text IS NULL
+  AND ($8::uuid IS NULL OR t.credit_card_id = $8::uuid)
+  AND ($9::uuid IS NULL OR t.created_by_member_id = $9::uuid)
+  AND ($10::uuid IS NULL OR t.person_member_id = $10::uuid)
+  AND ($11::text IS NULL OR t.scope = $11::text)
+  AND ($12::text IS NULL OR t.payment_method = $12::text)
+  AND ($13::text IS NULL
        OR strpos(lower(t.description || ' ' || COALESCE(t.merchant, '') || ' ' || COALESCE(t.notes, '')),
-                 lower($12::text)) > 0)
-  AND ($13::date IS NULL
-       OR (t.occurred_on, t.id) < ($13::date, $14::uuid))
+                 lower($13::text)) > 0)
+  AND ($14::date IS NULL
+       OR (t.occurred_on, t.id) < ($14::date, $15::uuid))
 ORDER BY t.occurred_on DESC, t.id DESC
-LIMIT $15
+LIMIT $16
 `
 
 type ListTransactionsParams struct {
@@ -669,6 +676,7 @@ type ListTransactionsParams struct {
 	ToDate            *time.Time
 	CategoryID        *uuid.UUID
 	AccountID         *uuid.UUID
+	CreditCardID      *uuid.UUID
 	CreatedByMemberID *uuid.UUID
 	PersonMemberID    *uuid.UUID
 	Scope             *string
@@ -692,7 +700,8 @@ type ListTransactionsRow struct {
 	CategoryID        uuid.UUID
 	OccurredOn        time.Time
 	PaymentMethod     string
-	AccountID         uuid.UUID
+	AccountID         *uuid.UUID
+	CreditCardID      *uuid.UUID
 	Status            string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -711,6 +720,7 @@ func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsPara
 		arg.ToDate,
 		arg.CategoryID,
 		arg.AccountID,
+		arg.CreditCardID,
 		arg.CreatedByMemberID,
 		arg.PersonMemberID,
 		arg.Scope,
@@ -741,6 +751,7 @@ func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsPara
 			&i.OccurredOn,
 			&i.PaymentMethod,
 			&i.AccountID,
+			&i.CreditCardID,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,

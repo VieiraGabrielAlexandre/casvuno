@@ -1,8 +1,10 @@
 -- name: CreateTransaction :exec
 INSERT INTO transactions (id, household_id, kind, scope, person_member_id, created_by_member_id, description,
-                          merchant, notes, amount_cents, category_id, occurred_on, payment_method, account_id)
+                          merchant, notes, amount_cents, category_id, occurred_on, payment_method, account_id,
+                          credit_card_id)
 VALUES (@id, @household_id, @kind, @scope, sqlc.narg(person_member_id), @created_by_member_id, @description,
-        sqlc.narg(merchant), sqlc.narg(notes), @amount_cents, @category_id, @occurred_on, @payment_method, @account_id);
+        sqlc.narg(merchant), sqlc.narg(notes), @amount_cents, @category_id, @occurred_on, @payment_method,
+        sqlc.narg(account_id), sqlc.narg(credit_card_id));
 
 -- name: CreateObligation :exec
 INSERT INTO obligations (id, household_id, transaction_id, kind, source, status, amount_cents, due_on, description,
@@ -19,7 +21,7 @@ VALUES (@id, @household_id, @obligation_id, @account_movement_id, @amount_cents,
 
 -- name: GetTransaction :one
 SELECT id, kind, scope, person_member_id, created_by_member_id, description, merchant, notes, amount_cents,
-       category_id, occurred_on, payment_method, account_id, status, created_at, updated_at
+       category_id, occurred_on, payment_method, account_id, credit_card_id, status, created_at, updated_at
 FROM transactions
 WHERE household_id = @household_id AND id = @id;
 
@@ -84,8 +86,8 @@ WHERE household_id = @household_id AND id = @id AND status = 'PLANNED';
 -- serves "repeat last" (createdBy=me).
 -- name: ListTransactions :many
 SELECT t.id, t.kind, t.scope, t.person_member_id, t.created_by_member_id, t.description, t.merchant, t.notes,
-       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.status, t.created_at,
-       t.updated_at
+       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.credit_card_id, t.status,
+       t.created_at, t.updated_at
 FROM transactions t
 WHERE t.household_id = @household_id
   AND (sqlc.narg(status)::text IS NULL OR t.status = sqlc.narg(status)::text)
@@ -97,6 +99,7 @@ WHERE t.household_id = @household_id
        OR t.category_id IN (SELECT c.id FROM categories c
                             WHERE c.household_id = t.household_id AND c.parent_id = sqlc.narg(category_id)::uuid))
   AND (sqlc.narg(account_id)::uuid IS NULL OR t.account_id = sqlc.narg(account_id)::uuid)
+  AND (sqlc.narg(credit_card_id)::uuid IS NULL OR t.credit_card_id = sqlc.narg(credit_card_id)::uuid)
   AND (sqlc.narg(created_by_member_id)::uuid IS NULL OR t.created_by_member_id = sqlc.narg(created_by_member_id)::uuid)
   AND (sqlc.narg(person_member_id)::uuid IS NULL OR t.person_member_id = sqlc.narg(person_member_id)::uuid)
   AND (sqlc.narg(scope)::text IS NULL OR t.scope = sqlc.narg(scope)::text)
