@@ -78,8 +78,28 @@ var ledgerModule = fx.Module("ledger",
 		func(s *categories.Service) ledger.CategoryChecker { return s },
 		func(s *households.Service) ledger.MemberChecker { return s },
 		func(s *accounts.Service) ledger.Cash { return ledgerCash{s} },
+		func(s *cards.Service) ledger.Cards { return ledgerCards{s} },
 	),
 )
+
+// ledgerCards adapts the cards module to ledger.Cards (purchases on the card).
+type ledgerCards struct{ cards *cards.Service }
+
+func (c ledgerCards) RequireActiveCard(ctx context.Context, householdID, cardID uuid.UUID, field string) error {
+	return c.cards.RequireActiveForPurchase(ctx, householdID, cardID, field)
+}
+
+func (c ledgerCards) PlaceInstallments(ctx context.Context, householdID uuid.UUID, p ledger.CardPurchase) ([]ledger.CardInstallment, bool, error) {
+	placed, err := c.cards.PlaceInstallments(ctx, householdID, cards.Purchase(p))
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]ledger.CardInstallment, 0, len(placed.Installments))
+	for _, i := range placed.Installments {
+		out = append(out, ledger.CardInstallment(i))
+	}
+	return out, placed.Shifted, nil
+}
 
 // ledgerCash adapts the accounts module to ledger.Cash (direct payments and receipts of
 // obligations), keeping the two modules unaware of each other.

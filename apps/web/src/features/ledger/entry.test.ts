@@ -40,6 +40,7 @@ const tx: Transaction = {
   occurredOn: "2026-11-03",
   paymentMethod: "BANK_TRANSFER",
   accountId: "acc2",
+  creditCardId: null,
   status: "ACTIVE",
   createdAt: "2026-11-03T00:00:00Z",
   updatedAt: "2026-11-03T00:00:00Z",
@@ -115,6 +116,20 @@ describe("entry", () => {
       merchant: "Cliente",
       method: "BANK_TRANSFER",
       accountId: "acc2",
+    });
+  });
+
+  it("brings a card purchase back without a card (the form has none yet)", () => {
+    const purchase: Transaction = {
+      ...tx,
+      kind: "EXPENSE",
+      paymentMethod: "CREDIT_CARD",
+      accountId: null,
+      creditCardId: "card",
+    };
+    expect(fromTransaction(purchase, "2026-11-11")).toMatchObject({
+      method: "PIX",
+      accountId: "",
     });
   });
 });

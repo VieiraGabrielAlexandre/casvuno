@@ -1,5 +1,6 @@
-// Package cards owns credit cards, their invoice cycle and, from F4.3 on, invoices and
-// installments (ADR 0003). The card never stores the full number, the CVV or credentials.
+// Package cards owns credit cards, their invoice cycle, invoices and installments (ADR
+// 0003). The card never stores the full number, the CVV or credentials. Purchases come from
+// the ledger, which writes the transaction and asks this module to place the installments.
 package cards
 
 import (
@@ -174,8 +175,8 @@ func (s *Service) Create(ctx context.Context, m authctx.Membership, in CreateInp
 
 // Update edits a card. An archived card only accepts being restored.
 //
-// Archiving will require no open invoice balance once invoices exist (F4.4/F4.5); until then
-// a card has no invoices and can always be archived (I-49).
+// Archiving is still always allowed: requiring no open invoice balance arrives with invoice
+// payments (F4.5, I-49). An archived card accepts no new purchase.
 func (s *Service) Update(ctx context.Context, m authctx.Membership, id uuid.UUID, in UpdateInput) (Card, error) {
 	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
 		q := store.New(s.tx.Conn(ctx))

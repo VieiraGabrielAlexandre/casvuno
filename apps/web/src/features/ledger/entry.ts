@@ -78,7 +78,8 @@ export function isCompleteTemplate(t: QuickTemplate): boolean {
 
 /**
  * An existing entry as form values: "repetir último" uses today's date, "corrigir" keeps
- * the original one. Always paid now (a correction of a paid entry is paid too).
+ * the original one. Always paid now (a correction of a paid entry is paid too). The form
+ * has no card yet (F4.7): a card purchase comes back as Pix with no account to choose.
  */
 export function fromTransaction(
   tx: Transaction,
@@ -90,8 +91,8 @@ export function fromTransaction(
     amountCents: tx.amountCents,
     description: tx.description,
     categoryId: tx.categoryId,
-    accountId: tx.accountId,
-    method: tx.paymentMethod,
+    accountId: tx.accountId ?? "",
+    method: tx.paymentMethod === "CREDIT_CARD" ? "PIX" : tx.paymentMethod,
     scope: tx.scope,
     personMemberId: tx.personMemberId ?? "",
     merchant: tx.merchant ?? "",

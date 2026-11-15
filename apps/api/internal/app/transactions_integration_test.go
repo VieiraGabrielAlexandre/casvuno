@@ -494,7 +494,7 @@ func TestTransactionListing(t *testing.T) {
 		t.Fatalf("walked = %v, want %v", walked, want)
 	}
 
-	for _, query := range []string{"status=GONE", "kind=X", "scope=SPLIT", "paymentMethod=CREDIT_CARD", "categoryId=x",
+	for _, query := range []string{"status=GONE", "kind=X", "scope=SPLIT", "paymentMethod=CHEQUE", "creditCardId=x", "categoryId=x",
 		"from=2026-11-05&to=2026-11-01", "from=05/11/2026", "limit=0", "cursor=bad", "q=" + strings.Repeat("x", 101)} {
 		owner.expect(http.StatusBadRequest, http.MethodGet, "/api/v1/households/"+h.ID+"/transactions?"+query, nil)
 	}

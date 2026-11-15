@@ -220,6 +220,7 @@ func TestHouseholdIsolation(t *testing.T) {
 	forecastA := ownerA.createForecast(a.ID, forecastBody("EXPENSE", catA.ID, &accA.ID, 700, "2026-11-10", "2026-11-20"))
 	tplA := ownerA.createTemplate(a.ID, templateBody(catA.ID, &accA.ID))
 	cardA := ownerA.createCard(a.ID, cardBody(a.MemberID, nil))
+	purchaseA := ownerA.purchase(a.ID, purchaseBody(catA.ID, cardA.ID, 3000, 3, "2026-11-10"))
 
 	ownerB, _ := api.registerUser("ownerB")
 	b := ownerB.createHousehold("Casa B")
@@ -265,6 +266,7 @@ func TestHouseholdIsolation(t *testing.T) {
 	// A's transaction read through B, and A's category, account or member used in an entry in B:
 	// rejected as if they did not exist (T15, RN-021).
 	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/transactions/"+txA.ID, nil)
+	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/transactions/"+purchaseA.Transaction.ID, nil)
 	ownerB.expect(http.StatusNotFound, http.MethodPatch, "/api/v1/households/"+b.ID+"/transactions/"+txA.ID, map[string]any{"description": "x"})
 	ownerB.expect(http.StatusNotFound, http.MethodPost, "/api/v1/households/"+b.ID+"/transactions/"+txA.ID+"/void", nil,
 		"Idempotency-Key", uuid.NewString())
@@ -277,6 +279,7 @@ func TestHouseholdIsolation(t *testing.T) {
 		{expenseBody(catA.ID, accB.ID, 100), "CATEGORY_NOT_FOUND"},
 		{expenseBody(catB.ID, accA.ID, 100), "ACCOUNT_NOT_FOUND"},
 		{personal, "PERSON_NOT_MEMBER"},
+		{purchaseBody(catB.ID, cardA.ID, 100, 1, "2026-11-10"), "CARD_NOT_FOUND"},
 	} {
 		if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/transactions", tc.body,
 			"Idempotency-Key", uuid.NewString()).errorCode(t); code != tc.code {
@@ -444,7 +447,7 @@ func TestAuditTrail(t *testing.T) {
 func countRows(t *testing.T, api *testAPI) map[string]int64 {
 	t.Helper()
 	out := map[string]int64{}
-	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers", "credit_cards", "transactions", "obligations", "obligation_payments", "quick_templates"} {
+	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers", "credit_cards", "card_invoices", "card_installments", "transactions", "obligations", "obligation_payments", "quick_templates"} {
 		var n int64
 		if err := api.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 			t.Fatal(err)

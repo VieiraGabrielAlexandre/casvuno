@@ -104,6 +104,7 @@ const tx = (overrides: Partial<Transaction> = {}): Transaction => ({
   occurredOn: "2026-11-11",
   paymentMethod: "PIX",
   accountId: account.id,
+  creditCardId: null,
   status: "ACTIVE",
   createdAt: "2026-11-11T12:00:00Z",
   updatedAt: "2026-11-11T12:00:00Z",

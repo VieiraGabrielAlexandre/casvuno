@@ -4,6 +4,7 @@ import type {
   PaymentMethod,
   Scope,
   TransactionKind,
+  TransactionPaymentMethod,
 } from "@/lib/api/client";
 import { buildTree } from "@/features/categories/tree";
 
@@ -22,6 +23,10 @@ export const methodLabel: Record<PaymentMethod, string> = {
 };
 
 export const paymentMethods = Object.keys(methodLabel) as PaymentMethod[];
+
+/** Labels of a recorded transaction's method, card purchases included. */
+export const transactionMethodLabel: Record<TransactionPaymentMethod, string> =
+  { ...methodLabel, CREDIT_CARD: "Cartão de crédito" };
 
 export const scopeLabel: Record<Scope, string> = {
   FAMILY: "Família",

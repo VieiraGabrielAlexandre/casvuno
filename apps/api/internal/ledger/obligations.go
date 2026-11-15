@@ -268,7 +268,7 @@ func (s *Service) confirm(ctx context.Context, q *store.Queries, m authctx.Membe
 		ID: txID, HouseholdID: m.HouseholdID, Kind: transactionKind(o.Kind), Scope: o.Scope,
 		PersonMemberID: o.PersonMemberID, CreatedByMemberID: o.CreatedByMemberID, Description: o.Description,
 		AmountCents: o.AmountCents, CategoryID: o.CategoryID, OccurredOn: o.CompetenceOn,
-		PaymentMethod: o.PaymentMethod, AccountID: accountID,
+		PaymentMethod: o.PaymentMethod, AccountID: &accountID,
 	}); err != nil {
 		return fmt.Errorf("create transaction: %w", err)
 	}

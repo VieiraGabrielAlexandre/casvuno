@@ -62,7 +62,17 @@ func TestNormalizeRejects(t *testing.T) {
 		{"planned without due date", func(in *CreateInput) { in.Payment.Mode = ModePlanned }, "payment.dueOn"},
 		{"planned with merchant", func(in *CreateInput) { planned(in); in.Merchant = ptr("Feira") }, "merchant"},
 		{"planned with notes", func(in *CreateInput) { planned(in); in.Notes = ptr("x") }, "notes"},
-		{"credit card (F4.3)", func(in *CreateInput) { in.Payment.Method = "CREDIT_CARD" }, "payment.method"},
+		{"unknown method", func(in *CreateInput) { in.Payment.Method = "CHEQUE" }, "payment.method"},
+		{"card on an account entry", func(in *CreateInput) { c := uuid.New(); in.Payment.CardID = &c }, "payment.cardId"},
+		{"installments on an account entry", func(in *CreateInput) { in.Payment.Installments = 2 }, "payment.installments"},
+		{"card without card", func(in *CreateInput) { card(in); in.Payment.CardID = nil }, "payment.cardId"},
+		{"income on the card", func(in *CreateInput) { card(in); in.Kind = KindIncome }, "payment.method"},
+		{"card with account", func(in *CreateInput) { card(in); a := uuid.New(); in.Payment.AccountID = &a }, "payment.accountId"},
+		{"card with due date", func(in *CreateInput) { card(in); d := in.OccurredOn; in.Payment.DueOn = &d }, "payment.dueOn"},
+		{"planned card purchase", func(in *CreateInput) { card(in); in.Payment.Mode = ModePlanned }, "payment.mode"},
+		{"61 installments", func(in *CreateInput) { card(in); in.Payment.Installments = 61 }, "payment.installments"},
+		{"negative installments", func(in *CreateInput) { card(in); in.Payment.Installments = -1 }, "payment.installments"},
+		{"installment under one cent", func(in *CreateInput) { card(in); in.AmountCents, in.Payment.Installments = 5, 6 }, "payment.installments"},
 		{"missing account", func(in *CreateInput) { in.Payment.AccountID = nil }, "payment.accountId"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,6 +95,28 @@ func TestNormalizeRejects(t *testing.T) {
 	in.Scope, in.PersonMemberID = ScopePersonal, &person
 	if _, err := normalize(in); err != nil {
 		t.Fatalf("boundaries rejected: %v", err)
+	}
+}
+
+// card turns the input into a purchase on a card.
+func card(in *CreateInput) {
+	c := uuid.New()
+	in.Payment = Payment{Method: MethodCreditCard, CardID: &c}
+}
+
+// A card purchase defaults to one installment, accepts 60 and one cent per installment, and
+// keeps its merchant and notes (unlike a forecast).
+func TestNormalizeCardPurchase(t *testing.T) {
+	in := validInput()
+	card(&in)
+	in.Merchant = ptr("Loja")
+	out, err := normalize(in)
+	if err != nil || out.Payment.Installments != 1 || out.Merchant == nil {
+		t.Fatalf("out = %+v, err = %v", out.Payment, err)
+	}
+	in.AmountCents, in.Payment.Installments, in.Payment.Mode = 60, 60, ModeImmediate
+	if out, err = normalize(in); err != nil || out.Payment.Installments != 60 || out.Payment.Mode != "" {
+		t.Fatalf("60 installments of one cent: %+v, %v", out.Payment, err)
 	}
 }
 

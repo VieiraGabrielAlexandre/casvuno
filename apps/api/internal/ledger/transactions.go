@@ -42,6 +42,7 @@ type TransactionQuery struct {
 	From, To       *time.Time
 	CategoryID     *uuid.UUID
 	AccountID      *uuid.UUID
+	CreditCardID   *uuid.UUID
 	PersonMemberID *uuid.UUID
 	CreatedBy      *uuid.UUID // author member; "repeat last" uses the caller's own
 	Scope          *string
@@ -67,7 +68,7 @@ type TransactionUpdate struct {
 func (s *Service) ListTransactions(ctx context.Context, m authctx.Membership, q TransactionQuery) ([]Transaction, *TransactionPosition, error) {
 	params := store.ListTransactionsParams{
 		HouseholdID: m.HouseholdID, Kind: q.Kind, FromDate: q.From, ToDate: q.To, CategoryID: q.CategoryID,
-		AccountID: q.AccountID, PersonMemberID: q.PersonMemberID, CreatedByMemberID: q.CreatedBy, Scope: q.Scope,
+		AccountID: q.AccountID, CreditCardID: q.CreditCardID, PersonMemberID: q.PersonMemberID, CreatedByMemberID: q.CreatedBy, Scope: q.Scope,
 		PaymentMethod: q.PaymentMethod,
 		RowLimit:      int32(q.Limit + 1), //nolint:gosec // limit validated (<= 100)
 	}
@@ -111,7 +112,8 @@ func (s *Service) ListTransactions(ctx context.Context, m authctx.Membership, q 
 }
 
 // Update edits the non-structural fields of an active transaction (I-18) and keeps the copy
-// held by its obligation in step. A new category must be active and of the same kind; a new
+// held by its obligation in step (a card purchase has none: its installments carry no
+// classification). A new category must be active and of the same kind; a new
 // person must be an active member; PERSONAL requires a person (I-43).
 func (s *Service) Update(ctx context.Context, m authctx.Membership, id uuid.UUID, in TransactionUpdate) (Transaction, error) {
 	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
@@ -136,6 +138,9 @@ func (s *Service) Update(ctx context.Context, m authctx.Membership, id uuid.UUID
 		}); err != nil {
 			return fmt.Errorf("update transaction: %w", err)
 		}
+		if t.CreditCardID != nil {
+			return s.recordUpdate(ctx, m, id, changed)
+		}
 		obligationID, err := q.GetObligationIDByTransaction(ctx, store.GetObligationIDByTransactionParams{
 			HouseholdID: m.HouseholdID, TransactionID: &id,
 		})
@@ -148,17 +153,21 @@ func (s *Service) Update(ctx context.Context, m authctx.Membership, id uuid.UUID
 		}); err != nil {
 			return fmt.Errorf("update obligation: %w", err)
 		}
-		// Field names only (ADR 0012): no descriptions or notes in the audit trail.
-		return s.audit.Record(ctx, audit.Event{
-			HouseholdID: m.HouseholdID, ActorUserID: m.UserID,
-			EntityType: "transaction", EntityID: id, Action: "transaction.updated",
-			Metadata: map[string]any{"fields": changed},
-		})
+		return s.recordUpdate(ctx, m, id, changed)
 	})
 	if err != nil {
 		return Transaction{}, err
 	}
 	return s.Get(ctx, m, id)
+}
+
+// recordUpdate audits an edit with the field names only (ADR 0012): no descriptions or notes.
+func (s *Service) recordUpdate(ctx context.Context, m authctx.Membership, id uuid.UUID, changed []string) error {
+	return s.audit.Record(ctx, audit.Event{
+		HouseholdID: m.HouseholdID, ActorUserID: m.UserID,
+		EntityType: "transaction", EntityID: id, Action: "transaction.updated",
+		Metadata: map[string]any{"fields": changed},
+	})
 }
 
 // applyUpdate validates the update against the current transaction and returns the new
@@ -253,6 +262,12 @@ func (s *Service) Void(ctx context.Context, m authctx.Membership, id uuid.UUID) 
 		}
 		if t.Status == TxVoided {
 			return nil
+		}
+		if t.CreditCardID != nil {
+			// Voiding a card purchase cancels its installments while the invoices are OPEN
+			// (RN-019); it arrives with F4.6.
+			return kernel.NewError(kernel.ErrInvariant, "CARD_PURCHASE_VOID_UNAVAILABLE",
+				"Ainda não é possível cancelar uma compra no cartão.")
 		}
 		obligationID, err := q.GetObligationIDByTransaction(ctx, store.GetObligationIDByTransactionParams{
 			HouseholdID: m.HouseholdID, TransactionID: &id,

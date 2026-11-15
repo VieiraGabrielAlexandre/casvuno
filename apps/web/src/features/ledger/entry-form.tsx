@@ -219,7 +219,9 @@ export function EntryForm({
         ? `Lançamento corrigido: ${what.toLowerCase()} de ${formatBRL(v.amountCents)} em ${formatDate(v.occurredOn)}.`
         : e.transaction
           ? `${what} de ${formatBRL(e.transaction.amountCents)} lançada em ${formatDate(e.transaction.occurredOn)}.`
-          : `Previsão de ${formatBRL(e.obligation.amountCents)} lançada, vence em ${formatDate(e.obligation.dueOn)}.`;
+          : e.obligation
+            ? `Previsão de ${formatBRL(e.obligation.amountCents)} lançada, vence em ${formatDate(e.obligation.dueOn)}.`
+            : "Lançamento registrado.";
       setDone(message);
       onDone?.(message);
       if (!correcting) {
@@ -289,7 +291,7 @@ export function EntryForm({
                   ` · ${formatBRL(t.defaultAmountCents)}`}
               </Button>
             ))}
-            {last && (
+            {last && !last.creditCardId && (
               <Button
                 type="button"
                 variant="outline"
