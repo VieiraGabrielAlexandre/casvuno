@@ -411,6 +411,8 @@ export interface paths {
          * Editar, arquivar ou restaurar cartão
          * @description Campo ausente fica como está; `lastFour: ""` limpa os dígitos. Novos dias de fechamento ou vencimento valem só
          *     para faturas ainda não criadas (ADR 0003). Cartão arquivado só aceita `isActive=true` (422 `CARD_ARCHIVED`).
+         *     Arquivar exige que nenhuma fatura do cartão tenha saldo em aberto, inclusive as futuras com parcelas
+         *     (422 `CARD_HAS_OPEN_BALANCE`).
          */
         patch: operations["updateCard"];
         trace?: never;
@@ -483,6 +485,57 @@ export interface paths {
          *     Fechar uma fatura já fechada não muda nada. Cartão arquivado também pode ter faturas fechadas.
          */
         post: operations["closeInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/invoices/{invoiceId}/payments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pagar a fatura (parcial ou total)
+         * @description Fatura `OPEN` (antecipação) ou `CLOSED`. Gera um pagamento e um movimento de caixa `OUT/INVOICE_PAYMENT` na
+         *     conta, na mesma transação. **Caixa**, nunca consumo: o consumo já foi contado nas compras (RN-014). O valor não
+         *     pode passar do saldo em aberto (422 `AMOUNT_EXCEEDS_OUTSTANDING`; sem saldo → 422 `INVOICE_ALREADY_PAID`).
+         *     Conta desconhecida → 422 `ACCOUNT_NOT_FOUND`, arquivada → 422 `ACCOUNT_ARCHIVED`.
+         */
+        post: operations["payInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/invoices/{invoiceId}/adjustments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ajustar o saldo da fatura (com sinal e motivo)
+         * @description Positivo aumenta o saldo (tarifa, juros, diferença do extrato); negativo reduz (estorno, crédito). Vale para
+         *     fatura `OPEN` ou `CLOSED` e não altera as parcelas (RN-012). Ajuste que deixaria o saldo negativo → 422
+         *     `ADJUSTMENT_EXCEEDS_BALANCE`. Cartão arquivado → 422 `CARD_ARCHIVED`. Compromisso, não consumo.
+         */
+        post: operations["adjustInvoice"];
         delete?: never;
         options?: never;
         head?: never;
@@ -998,8 +1051,8 @@ export interface components {
         /** @enum {string} */
         InvoiceStatus: "OPEN" | "CLOSED";
         /**
-         * @description Total = parcelas `ACTIVE` (os ajustes entram na F4.5); `paidCents` = pagamentos da fatura (F4.5). Saldo em aberto
-         *     é **compromisso**; as parcelas nunca são somadas de novo fora da fatura.
+         * @description Total = parcelas `ACTIVE` + ajustes; `paidCents` = pagamentos; `outstandingCents` = total − pago (nunca negativo).
+         *     Saldo em aberto é **compromisso**; as parcelas nunca são somadas de novo fora da fatura.
          */
         Invoice: {
             /** Format: uuid */
@@ -1023,10 +1076,12 @@ export interface components {
             /** @description Parcelas ACTIVE */
             installmentsCount: number;
             installmentsCents: number;
+            /** @description Soma dos ajustes (com sinal) */
+            adjustmentsCents: number;
             totalCents: number;
             paidCents: number;
             outstandingCents: number;
-            /** @description Congelado no fechamento */
+            /** @description Parcelas ACTIVE congeladas no fechamento (sem ajustes) */
             closedBaseAmountCents: number | null;
             /** Format: date-time */
             closedAt: string | null;
@@ -1065,9 +1120,50 @@ export interface components {
             /** @description Valor total da compra */
             purchaseAmountCents: number;
         };
+        InvoicePayment: {
+            /** Format: uuid */
+            id: string;
+            amountCents: number;
+            paidOn: components["schemas"]["Date"];
+            /** Format: uuid */
+            accountId: string;
+            /**
+             * Format: uuid
+             * @description Movimento OUT/INVOICE_PAYMENT (caixa)
+             */
+            movementId: string;
+            /** Format: uuid */
+            createdByMemberId: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        InvoiceAdjustment: {
+            /** Format: uuid */
+            id: string;
+            /** @description Positivo aumenta o saldo; negativo reduz */
+            amountCents: number;
+            reason: string;
+            /** Format: uuid */
+            createdByMemberId: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
         InvoiceDetail: {
             invoice: components["schemas"]["Invoice"];
             installments: components["schemas"]["InvoiceInstallment"][];
+            payments: components["schemas"]["InvoicePayment"][];
+            adjustments: components["schemas"]["InvoiceAdjustment"][];
+        };
+        PayInvoiceRequest: {
+            amountCents: number;
+            paidOn: components["schemas"]["Date"];
+            /** Format: uuid */
+            accountId: string;
+        };
+        AdjustInvoiceRequest: {
+            /** @description Diferente de zero */
+            amountCents: number;
+            reason: string;
         };
         Movement: {
             /** Format: uuid */
@@ -2360,6 +2456,90 @@ export interface operations {
         responses: {
             /** @description Fatura fechada (ou repetida com a mesma Idempotency-Key) */
             200: {
+                headers: {
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoiceDetail"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    payInvoice: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+                 *     Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+                 *     Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+                 *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PayInvoiceRequest"];
+            };
+        };
+        responses: {
+            /** @description Pagamento registrado (ou repetido com a mesma Idempotency-Key) */
+            201: {
+                headers: {
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoiceDetail"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    adjustInvoice: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+                 *     Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+                 *     Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+                 *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdjustInvoiceRequest"];
+            };
+        };
+        responses: {
+            /** @description Ajuste registrado (ou repetido com a mesma Idempotency-Key) */
+            201: {
                 headers: {
                     "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
                     [name: string]: unknown;

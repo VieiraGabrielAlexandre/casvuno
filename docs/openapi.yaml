@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.13.0
+  version: 0.14.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -609,6 +609,8 @@ paths:
       description: |
         Campo ausente fica como está; `lastFour: ""` limpa os dígitos. Novos dias de fechamento ou vencimento valem só
         para faturas ainda não criadas (ADR 0003). Cartão arquivado só aceita `isActive=true` (422 `CARD_ARCHIVED`).
+        Arquivar exige que nenhuma fatura do cartão tenha saldo em aberto, inclusive as futuras com parcelas
+        (422 `CARD_HAS_OPEN_BALANCE`).
       requestBody:
         required: true
         content:
@@ -696,6 +698,75 @@ paths:
       responses:
         "200":
           description: Fatura fechada (ou repetida com a mesma Idempotency-Key)
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvoiceDetail" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/invoices/{invoiceId}/payments:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/InvoiceId"
+    post:
+      tags: [invoices]
+      operationId: payInvoice
+      summary: Pagar a fatura (parcial ou total)
+      description: |
+        Fatura `OPEN` (antecipação) ou `CLOSED`. Gera um pagamento e um movimento de caixa `OUT/INVOICE_PAYMENT` na
+        conta, na mesma transação. **Caixa**, nunca consumo: o consumo já foi contado nas compras (RN-014). O valor não
+        pode passar do saldo em aberto (422 `AMOUNT_EXCEEDS_OUTSTANDING`; sem saldo → 422 `INVOICE_ALREADY_PAID`).
+        Conta desconhecida → 422 `ACCOUNT_NOT_FOUND`, arquivada → 422 `ACCOUNT_ARCHIVED`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PayInvoiceRequest" }
+      responses:
+        "201":
+          description: Pagamento registrado (ou repetido com a mesma Idempotency-Key)
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvoiceDetail" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/invoices/{invoiceId}/adjustments:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/InvoiceId"
+    post:
+      tags: [invoices]
+      operationId: adjustInvoice
+      summary: Ajustar o saldo da fatura (com sinal e motivo)
+      description: |
+        Positivo aumenta o saldo (tarifa, juros, diferença do extrato); negativo reduz (estorno, crédito). Vale para
+        fatura `OPEN` ou `CLOSED` e não altera as parcelas (RN-012). Ajuste que deixaria o saldo negativo → 422
+        `ADJUSTMENT_EXCEEDS_BALANCE`. Cartão arquivado → 422 `CARD_ARCHIVED`. Compromisso, não consumo.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdjustInvoiceRequest" }
+      responses:
+        "201":
+          description: Ajuste registrado (ou repetido com a mesma Idempotency-Key)
           headers:
             Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
           content:
@@ -1553,9 +1624,9 @@ components:
       type: object
       additionalProperties: false
       description: |
-        Total = parcelas `ACTIVE` (os ajustes entram na F4.5); `paidCents` = pagamentos da fatura (F4.5). Saldo em aberto
-        é **compromisso**; as parcelas nunca são somadas de novo fora da fatura.
-      required: [id, creditCardId, cycleStartOn, closingOn, dueOn, referenceMonth, status, paymentStatus, closingPending, installmentsCount, installmentsCents, totalCents, paidCents, outstandingCents, closedBaseAmountCents, closedAt, closedByMemberId, createdAt, updatedAt]
+        Total = parcelas `ACTIVE` + ajustes; `paidCents` = pagamentos; `outstandingCents` = total − pago (nunca negativo).
+        Saldo em aberto é **compromisso**; as parcelas nunca são somadas de novo fora da fatura.
+      required: [id, creditCardId, cycleStartOn, closingOn, dueOn, referenceMonth, status, paymentStatus, closingPending, installmentsCount, installmentsCents, adjustmentsCents, totalCents, paidCents, outstandingCents, closedBaseAmountCents, closedAt, closedByMemberId, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         creditCardId: { type: string, format: uuid }
@@ -1568,10 +1639,11 @@ components:
         closingPending: { type: boolean, description: Aberta e com o fechamento já alcançado (hoje no fuso da família) }
         installmentsCount: { type: integer, minimum: 0, description: Parcelas ACTIVE }
         installmentsCents: { type: integer, minimum: 0 }
+        adjustmentsCents: { type: integer, description: Soma dos ajustes (com sinal) }
         totalCents: { type: integer, minimum: 0 }
         paidCents: { type: integer, minimum: 0 }
         outstandingCents: { type: integer, minimum: 0 }
-        closedBaseAmountCents: { type: [integer, "null"], minimum: 0, description: Congelado no fechamento }
+        closedBaseAmountCents: { type: [integer, "null"], minimum: 0, description: Parcelas ACTIVE congeladas no fechamento (sem ajustes) }
         closedAt: { type: [string, "null"], format: date-time }
         closedByMemberId: { type: [string, "null"], format: uuid }
         createdAt: { type: string, format: date-time }
@@ -1606,15 +1678,62 @@ components:
         personMemberId: { type: [string, "null"], format: uuid }
         purchaseAmountCents: { type: integer, minimum: 1, description: Valor total da compra }
 
+    InvoicePayment:
+      type: object
+      additionalProperties: false
+      required: [id, amountCents, paidOn, accountId, movementId, createdByMemberId, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        amountCents: { type: integer, minimum: 1 }
+        paidOn: { $ref: "#/components/schemas/Date" }
+        accountId: { type: string, format: uuid }
+        movementId: { type: string, format: uuid, description: Movimento OUT/INVOICE_PAYMENT (caixa) }
+        createdByMemberId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+
+    InvoiceAdjustment:
+      type: object
+      additionalProperties: false
+      required: [id, amountCents, reason, createdByMemberId, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        amountCents: { type: integer, description: Positivo aumenta o saldo; negativo reduz }
+        reason: { type: string }
+        createdByMemberId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+
     InvoiceDetail:
       type: object
       additionalProperties: false
-      required: [invoice, installments]
+      required: [invoice, installments, payments, adjustments]
       properties:
         invoice: { $ref: "#/components/schemas/Invoice" }
         installments:
           type: array
           items: { $ref: "#/components/schemas/InvoiceInstallment" }
+        payments:
+          type: array
+          items: { $ref: "#/components/schemas/InvoicePayment" }
+        adjustments:
+          type: array
+          items: { $ref: "#/components/schemas/InvoiceAdjustment" }
+
+    PayInvoiceRequest:
+      type: object
+      additionalProperties: false
+      required: [amountCents, paidOn, accountId]
+      properties:
+        amountCents: { type: integer, minimum: 1, maximum: 1000000000000000 }
+        paidOn: { $ref: "#/components/schemas/Date" }
+        accountId: { type: string, format: uuid }
+
+    AdjustInvoiceRequest:
+      type: object
+      additionalProperties: false
+      required: [amountCents, reason]
+      properties:
+        amountCents: { type: integer, minimum: -1000000000000000, maximum: 1000000000000000, description: Diferente de zero }
+        reason: { type: string, minLength: 1, maxLength: 200 }
 
     Movement:
       type: object
