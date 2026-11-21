@@ -61,3 +61,34 @@ func TestTemplateValidationRules(t *testing.T) {
 		}
 	}
 }
+
+// I-50 (F4.7): a card template is an expense with a card and no account.
+func TestCardTemplateRules(t *testing.T) {
+	card, method, empty, pix := uuid.NewString(), MethodCreditCard, "", "PIX"
+	cur := baseTemplate()
+	next, err := applyTemplateUpdate(cur, TemplateUpdate{PaymentMethod: &method, CreditCardID: &card, AccountID: &empty})
+	if err != nil || next.CreditCardID == nil || next.AccountID != nil {
+		t.Fatalf("card template = %+v, %v", next, err)
+	}
+	if c := templateChanges(cur, next); len(c) != 3 {
+		t.Fatalf("changed = %v", c)
+	}
+	// Back to Pix: the card must be cleared too.
+	if _, err := applyTemplateUpdate(next, TemplateUpdate{PaymentMethod: &pix}); err == nil {
+		t.Fatal("Pix with a card: accepted")
+	}
+	if back, err := applyTemplateUpdate(next, TemplateUpdate{PaymentMethod: &pix, CreditCardID: &empty}); err != nil || back.CreditCardID != nil {
+		t.Fatalf("back to Pix = %+v, %v", back, err)
+	}
+	income := next
+	income.Kind = KindIncome
+	if err := validTemplate(income, nil); err == nil {
+		t.Fatal("income on the card: accepted")
+	}
+	withAccount := next
+	acc := uuid.New()
+	withAccount.AccountID = &acc
+	if err := validTemplate(withAccount, nil); err == nil {
+		t.Fatal("card template with an account: accepted")
+	}
+}

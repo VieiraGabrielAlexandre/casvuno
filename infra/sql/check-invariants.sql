@@ -51,13 +51,15 @@ WHERE t.credit_card_id IS NOT NULL
 
 UNION ALL
 
--- INV-02: the installments of a card purchase are exactly its split: N rows numbered 1..N
+-- INV-02: the installments of a card purchase are exactly its split: N rows numbered 1..N,
+-- N = transactions.installment_count (F4.7)
 -- (UNIQUE + CHECK), summing to the amount, the first amount % N carrying the extra cent.
 SELECT 'INV-02', t.id::text, 'installments do not split the purchase amount'
 FROM transactions t
 JOIN card_installments i ON i.household_id = t.household_id AND i.transaction_id = t.id
-GROUP BY t.id, t.amount_cents
+GROUP BY t.id, t.amount_cents, t.installment_count
 HAVING count(*) <> min(i.installment_total) OR min(i.installment_total) <> max(i.installment_total)
+    OR count(*) <> t.installment_count
     OR sum(i.amount_cents) <> t.amount_cents
     OR bool_or(i.amount_cents <> t.amount_cents / i.installment_total
                                 + CASE WHEN i.installment_number <= t.amount_cents % i.installment_total THEN 1 ELSE 0 END)

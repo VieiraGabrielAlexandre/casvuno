@@ -29,6 +29,7 @@ type transactionDTO struct {
 	PaymentMethod     string  `json:"paymentMethod"`
 	AccountID         string  `json:"accountId"`
 	CreditCardID      *string `json:"creditCardId"`
+	InstallmentCount  *int    `json:"installmentCount"`
 	Status            string  `json:"status"`
 }
 

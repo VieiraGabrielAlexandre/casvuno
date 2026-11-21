@@ -1,10 +1,10 @@
 import type {
   CreateTransactionRequest,
-  PaymentMethod,
   QuickTemplate,
   Scope,
   Transaction,
   TransactionKind,
+  TransactionPaymentMethod,
 } from "@/lib/api/client";
 
 export type EntryMode = "IMMEDIATE" | "PLANNED";
@@ -16,7 +16,10 @@ export type EntryValues = {
   description: string;
   categoryId: string;
   accountId: string;
-  method: PaymentMethod;
+  /** CREDIT_CARD: a purchase on `cardId` in `installments` (F4.7); else paid from an account. */
+  method: TransactionPaymentMethod;
+  cardId: string;
+  installments: number;
   mode: EntryMode;
   occurredOn: string;
   dueOn: string;
@@ -38,6 +41,8 @@ export function emptyEntry(
     categoryId: "",
     accountId: "",
     method: "PIX",
+    cardId: "",
+    installments: 1,
     mode: "IMMEDIATE",
     occurredOn: today,
     dueOn: today,
@@ -66,20 +71,24 @@ export function fromTemplate(
     categoryId: t.categoryId,
     accountId: t.accountId ?? current.accountId,
     method: t.paymentMethod,
+    cardId: t.creditCardId ?? "",
     scope: t.scope,
     personMemberId: t.personMemberId ?? "",
   };
 }
 
-/** A complete template (amount and account) needs only the confirmation. */
+/** A complete template (amount and account or card) needs only the confirmation. */
 export function isCompleteTemplate(t: QuickTemplate): boolean {
-  return t.defaultAmountCents !== null && t.accountId !== null;
+  return (
+    t.defaultAmountCents !== null &&
+    (t.accountId !== null || t.creditCardId !== null)
+  );
 }
 
 /**
  * An existing entry as form values: "repetir último" uses today's date, "corrigir" keeps
- * the original one. Always paid now (a correction of a paid entry is paid too). The form
- * has no card yet (F4.7): a card purchase comes back as Pix with no account to choose.
+ * the original one. Always paid now (a correction of a paid entry is paid too); a card
+ * purchase comes back on its card with its number of installments.
  */
 export function fromTransaction(
   tx: Transaction,
@@ -92,7 +101,9 @@ export function fromTransaction(
     description: tx.description,
     categoryId: tx.categoryId,
     accountId: tx.accountId ?? "",
-    method: tx.paymentMethod === "CREDIT_CARD" ? "PIX" : tx.paymentMethod,
+    method: tx.paymentMethod,
+    cardId: tx.creditCardId ?? "",
+    installments: tx.installmentCount ?? 1,
     scope: tx.scope,
     personMemberId: tx.personMemberId ?? "",
     merchant: tx.merchant ?? "",
@@ -102,10 +113,12 @@ export function fromTransaction(
 
 /**
  * The API request. A forecast carries its due date, an optional account and no merchant
- * or notes (I-44); the person is sent only when chosen.
+ * or notes (I-44); a card purchase carries its card and installments and no account or
+ * mode (I-50); the person is sent only when chosen.
  */
 export function toCreateRequest(v: EntryValues): CreateTransactionRequest {
-  const planned = v.mode === "PLANNED";
+  const card = v.method === "CREDIT_CARD";
+  const planned = !card && v.mode === "PLANNED";
   const description = v.description.trim();
   const merchant = v.merchant.trim();
   const notes = v.notes.trim();
@@ -119,11 +132,26 @@ export function toCreateRequest(v: EntryValues): CreateTransactionRequest {
     ...(v.personMemberId ? { personMemberId: v.personMemberId } : {}),
     ...(!planned && merchant ? { merchant } : {}),
     ...(!planned && notes ? { notes } : {}),
-    payment: {
-      method: v.method,
-      mode: v.mode,
-      ...(v.accountId ? { accountId: v.accountId } : {}),
-      ...(planned ? { dueOn: v.dueOn } : {}),
-    },
+    payment: card
+      ? { method: v.method, cardId: v.cardId, installments: v.installments }
+      : {
+          method: v.method,
+          mode: v.mode,
+          ...(v.accountId ? { accountId: v.accountId } : {}),
+          ...(planned ? { dueOn: v.dueOn } : {}),
+        },
   };
+}
+
+/**
+ * The installment split shown before sending (RN-010, same rule as the API): the first
+ * `amount % n` installments carry one extra cent. Returns the first and the last value.
+ */
+export function installmentPreview(
+  amountCents: number,
+  n: number,
+): { first: number; last: number } | null {
+  if (!Number.isInteger(n) || n < 1 || n > 60 || amountCents < n) return null;
+  const base = Math.floor(amountCents / n);
+  return { first: amountCents % n > 0 ? base + 1 : base, last: base };
 }

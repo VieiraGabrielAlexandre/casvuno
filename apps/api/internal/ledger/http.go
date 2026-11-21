@@ -63,6 +63,7 @@ type transactionResponse struct {
 	PaymentMethod     string    `json:"paymentMethod"`
 	AccountID         *string   `json:"accountId"`
 	CreditCardID      *string   `json:"creditCardId"`
+	InstallmentCount  *int16    `json:"installmentCount"`
 	Status            string    `json:"status"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
@@ -74,7 +75,7 @@ func toResponse(t Transaction) transactionResponse {
 		CreatedByMemberID: t.CreatedByMemberID.String(), Description: t.Description, Merchant: t.Merchant,
 		Notes: t.Notes, AmountCents: t.AmountCents, CategoryID: t.CategoryID.String(),
 		OccurredOn: kernel.FormatDate(t.OccurredOn), PaymentMethod: t.PaymentMethod, AccountID: uuidString(t.AccountID),
-		CreditCardID: uuidString(t.CreditCardID), Status: t.Status, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		CreditCardID: uuidString(t.CreditCardID), InstallmentCount: t.InstallmentCount, Status: t.Status, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 }
 

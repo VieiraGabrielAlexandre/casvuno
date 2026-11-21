@@ -328,6 +328,8 @@ func TestHouseholdIsolation(t *testing.T) {
 	}{
 		{templateBody(catA.ID, nil), "CATEGORY_NOT_FOUND"},
 		{templateBody(catB.ID, &accA.ID), "ACCOUNT_NOT_FOUND"},
+		{map[string]any{"label": "Cartão de A", "kind": "EXPENSE", "description": "x", "categoryId": catB.ID, "scope": "FAMILY",
+			"paymentMethod": "CREDIT_CARD", "creditCardId": cardA.ID}, "CARD_NOT_FOUND"},
 		{personalTpl, "PERSON_NOT_MEMBER"},
 	} {
 		if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost, "/api/v1/households/"+b.ID+"/quick-templates", tc.body).errorCode(t); code != tc.code {

@@ -392,15 +392,12 @@ function TransactionRow({
               >
                 Editar
               </Button>
-              {/* "Corrigir" pre-fills the entry form, which has no card until F4.7. */}
-              {!t.creditCardId && (
-                <Link
-                  href={`/entry?household=${householdId}&correct=${t.id}`}
-                  className="inline-flex h-7 items-center rounded-lg border px-2.5 text-[0.8rem] font-medium hover:bg-muted"
-                >
-                  Corrigir valor ou data
-                </Link>
-              )}
+              <Link
+                href={`/entry?household=${householdId}&correct=${t.id}`}
+                className="inline-flex h-7 items-center rounded-lg border px-2.5 text-[0.8rem] font-medium hover:bg-muted"
+              >
+                Corrigir valor ou data
+              </Link>
               <Button
                 size="sm"
                 variant="destructive"

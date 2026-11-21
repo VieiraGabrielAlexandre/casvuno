@@ -19,6 +19,7 @@ const t: QuickTemplate = {
   personMemberId: null,
   paymentMethod: "PIX",
   accountId: "acc",
+  creditCardId: null,
   sortOrder: 0,
   createdAt: "2026-11-01T00:00:00Z",
   updatedAt: "2026-11-01T00:00:00Z",
@@ -52,5 +53,52 @@ describe("template requests", () => {
         label: "Cafezinho",
       }),
     ).toEqual({ label: "Cafezinho", defaultAmountCents: 0, accountId: "" });
+  });
+
+  it("a card favorite sends the card instead of the account (I-50)", () => {
+    const v = {
+      ...toTemplateValues(),
+      label: "Mercado",
+      description: "Mercado",
+      categoryId: "cat",
+      paymentMethod: "CREDIT_CARD" as const,
+      accountId: "acc",
+      creditCardId: "card",
+    };
+    expect(toCreateTemplate(v)).toEqual({
+      label: "Mercado",
+      kind: "EXPENSE",
+      description: "Mercado",
+      categoryId: "cat",
+      scope: "FAMILY",
+      paymentMethod: "CREDIT_CARD",
+      creditCardId: "card",
+    });
+  });
+
+  it("switching the method clears the other source", () => {
+    expect(
+      toUpdateTemplate(t, {
+        ...toTemplateValues(t),
+        paymentMethod: "CREDIT_CARD",
+        creditCardId: "card",
+      }),
+    ).toEqual({
+      paymentMethod: "CREDIT_CARD",
+      accountId: "",
+      creditCardId: "card",
+    });
+    const onCard = {
+      ...t,
+      paymentMethod: "CREDIT_CARD" as const,
+      accountId: null,
+      creditCardId: "card",
+    };
+    expect(
+      toUpdateTemplate(onCard, {
+        ...toTemplateValues(onCard),
+        paymentMethod: "PIX",
+      }),
+    ).toEqual({ paymentMethod: "PIX", creditCardId: "" });
   });
 });

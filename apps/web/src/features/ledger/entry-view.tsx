@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAccounts } from "@/features/accounts/hooks";
+import { useCards } from "@/features/cards/hooks";
 import { useCategories } from "@/features/categories/hooks";
 import { useHousehold, useMembers } from "@/features/households/hooks";
 import { errorMessage } from "@/lib/api/client";
@@ -29,6 +30,7 @@ export function EntryView({
 }) {
   const household = useHousehold(householdId);
   const accounts = useAccounts(householdId);
+  const cards = useCards(householdId);
   const categories = useCategories(householdId, true);
   const members = useMembers(householdId);
   const templates = useTemplates(householdId);
@@ -37,6 +39,7 @@ export function EntryView({
   const queries: { isError: boolean; isPending: boolean; error: unknown }[] = [
     household,
     accounts,
+    cards,
     categories,
     members,
     templates,
@@ -61,7 +64,8 @@ export function EntryView({
         {correctId && (
           <p className="text-sm text-muted-foreground">
             Valor, data, meio e conta não se editam: o lançamento original é
-            cancelado (o dinheiro volta para a conta) e este é lançado no lugar.
+            cancelado (o dinheiro volta para a conta; numa compra no cartão, as
+            parcelas saem das faturas) e este é lançado no lugar.
           </p>
         )}
       </div>
@@ -70,7 +74,8 @@ export function EntryView({
           <CardTitle>Despesa ou receita</CardTitle>
           <CardDescription>
             Pago agora entra no consumo e no caixa; previsto entra só nos
-            compromissos até ser pago.
+            compromissos até ser pago. Compra no cartão entra no consumo agora e
+            nas faturas; o caixa só muda quando a fatura é paga.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -85,7 +90,8 @@ export function EntryView({
                 Ver lançamentos
               </Link>
             </p>
-          ) : accounts.data!.items.every((a) => !a.isActive) ? (
+          ) : accounts.data!.items.every((a) => !a.isActive) &&
+            cards.data!.items.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               Cadastre uma conta antes de lançar.{" "}
               <Link
@@ -99,6 +105,7 @@ export function EntryView({
             <EntryForm
               householdId={householdId}
               accounts={accounts.data!.items.filter((a) => a.isActive)}
+              cards={cards.data!.items}
               categories={categories.data!}
               members={members.data!.filter((m) => m.status === "ACTIVE")}
               today={todayIn(household.data!.timezone)}

@@ -1271,6 +1271,8 @@ export interface components {
              * @description Preenchido só em compra no cartão
              */
             creditCardId: string | null;
+            /** @description Número de parcelas da compra no cartão */
+            installmentCount: number | null;
             /** @enum {string} */
             status: "ACTIVE" | "VOIDED";
             /** Format: date-time */
@@ -1290,9 +1292,14 @@ export interface components {
             scope: components["schemas"]["Scope"];
             /** Format: uuid */
             personMemberId: string | null;
-            paymentMethod: components["schemas"]["AccountPaymentMethod"];
+            paymentMethod: components["schemas"]["PaymentMethod"];
             /** Format: uuid */
             accountId: string | null;
+            /**
+             * Format: uuid
+             * @description Preenchido só em favorito de compra no cartão (CREDIT_CARD)
+             */
+            creditCardId: string | null;
             sortOrder: number;
             /** Format: date-time */
             createdAt: string;
@@ -1317,9 +1324,17 @@ export interface components {
              * @description Obrigatório se PERSONAL
              */
             personMemberId?: string;
-            paymentMethod: components["schemas"]["AccountPaymentMethod"];
-            /** Format: uuid */
+            paymentMethod: components["schemas"]["PaymentMethod"];
+            /**
+             * Format: uuid
+             * @description Não se usa com CREDIT_CARD
+             */
             accountId?: string;
+            /**
+             * Format: uuid
+             * @description Obrigatório com CREDIT_CARD (só despesa); cartão ativo da família
+             */
+            creditCardId?: string;
             /** @description Padrão = depois do último */
             sortOrder?: number;
         };
@@ -1333,9 +1348,11 @@ export interface components {
             scope?: components["schemas"]["Scope"];
             /** @description UUID de membro ativo; "" limpa */
             personMemberId?: string;
-            paymentMethod?: components["schemas"]["AccountPaymentMethod"];
+            paymentMethod?: components["schemas"]["PaymentMethod"];
             /** @description UUID de conta ativa; "" limpa */
             accountId?: string;
+            /** @description UUID de cartão ativo; "" limpa (obrigatório ao trocar o meio de CREDIT_CARD) */
+            creditCardId?: string;
             sortOrder?: number;
         };
         TransactionPage: {

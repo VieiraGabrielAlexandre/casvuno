@@ -42,6 +42,15 @@ export type CreateQuickTemplateRequest =
   components["schemas"]["CreateQuickTemplateRequest"];
 export type UpdateQuickTemplateRequest =
   components["schemas"]["UpdateQuickTemplateRequest"];
+export type CreditCard = components["schemas"]["Card"];
+export type CreateCardRequest = components["schemas"]["CreateCardRequest"];
+export type UpdateCardRequest = components["schemas"]["UpdateCardRequest"];
+export type Invoice = components["schemas"]["Invoice"];
+export type InvoiceDetail = components["schemas"]["InvoiceDetail"];
+export type InvoiceInstallment = components["schemas"]["InvoiceInstallment"];
+export type PayInvoiceRequest = components["schemas"]["PayInvoiceRequest"];
+export type AdjustInvoiceRequest =
+  components["schemas"]["AdjustInvoiceRequest"];
 export type TransactionQuery = NonNullable<
   paths["/api/v1/households/{householdId}/transactions"]["get"]["parameters"]["query"]
 >;

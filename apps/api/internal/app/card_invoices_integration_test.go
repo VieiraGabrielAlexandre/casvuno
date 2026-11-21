@@ -444,8 +444,8 @@ func TestCloseWaitsForAPurchaseInProgress(t *testing.T) {
 		{"SELECT 1 FROM credit_cards WHERE id = $1 FOR UPDATE", []any{card.ID}},
 		{"SELECT 1 FROM card_invoices WHERE id = $1 FOR UPDATE", []any{invoiceID}},
 		{`INSERT INTO transactions (id, household_id, kind, scope, created_by_member_id, description, amount_cents,
-		      category_id, occurred_on, payment_method, credit_card_id)
-		  VALUES ($1, $2, 'EXPENSE', 'FAMILY', $3, 'Em andamento', 700, $4, '2026-12-01', 'CREDIT_CARD', $5)`,
+		      category_id, occurred_on, payment_method, credit_card_id, installment_count)
+		  VALUES ($1, $2, 'EXPENSE', 'FAMILY', $3, 'Em andamento', 700, $4, '2026-12-01', 'CREDIT_CARD', $5, 1)`,
 			[]any{txID, h.ID, h.MemberID, cat.ID, card.ID}},
 		{`INSERT INTO card_installments (id, household_id, transaction_id, credit_card_id, card_invoice_id,
 		      installment_number, installment_total, amount_cents)

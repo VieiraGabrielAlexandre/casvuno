@@ -8,6 +8,7 @@ import { FormError, FormField } from "@/components/form-field";
 import { MoneyInput } from "@/components/money-input";
 import { SelectField } from "@/components/select-field";
 import { Button } from "@/components/ui/button";
+import { cardName } from "@/features/cards/labels";
 import { useCreateTemplate, useUpdateTemplate } from "@/features/ledger/hooks";
 import {
   categoryOptions,
@@ -19,6 +20,7 @@ import type {
   Account,
   Category,
   CreateQuickTemplateRequest,
+  CreditCard,
   Member,
   QuickTemplate,
   UpdateQuickTemplateRequest,
@@ -52,15 +54,21 @@ const schema = z
       "CASH",
       "BANK_TRANSFER",
       "BOLETO",
+      "CREDIT_CARD",
       "OTHER",
     ]),
     accountId: z.string(),
+    creditCardId: z.string(),
     scope: z.enum(["FAMILY", "PERSONAL"]),
     personMemberId: z.string(),
   })
   .refine((v) => v.scope === "FAMILY" || v.personMemberId !== "", {
     path: ["personMemberId"],
     message: "Escolha a pessoa.",
+  })
+  .refine((v) => v.paymentMethod !== "CREDIT_CARD" || v.creditCardId !== "", {
+    path: ["creditCardId"],
+    message: "Escolha o cartão.",
   });
 export type TemplateValues = z.infer<typeof schema>;
 const fields = [
@@ -70,6 +78,7 @@ const fields = [
   "categoryId",
   "paymentMethod",
   "accountId",
+  "creditCardId",
   "scope",
   "personMemberId",
 ] as const;
@@ -83,6 +92,7 @@ export function toTemplateValues(t?: QuickTemplate): TemplateValues {
     categoryId: t?.categoryId ?? "",
     paymentMethod: t?.paymentMethod ?? "PIX",
     accountId: t?.accountId ?? "",
+    creditCardId: t?.creditCardId ?? "",
     scope: t?.scope ?? "FAMILY",
     personMemberId: t?.personMemberId ?? "",
   };
@@ -91,6 +101,7 @@ export function toTemplateValues(t?: QuickTemplate): TemplateValues {
 export function toCreateTemplate(
   v: TemplateValues,
 ): CreateQuickTemplateRequest {
+  const card = v.paymentMethod === "CREDIT_CARD";
   return {
     label: v.label.trim(),
     kind: v.kind,
@@ -101,17 +112,25 @@ export function toCreateTemplate(
     ...(v.defaultAmountCents > 0
       ? { defaultAmountCents: v.defaultAmountCents }
       : {}),
-    ...(v.accountId ? { accountId: v.accountId } : {}),
+    // A card favorite uses the card instead of an account (I-50).
+    ...(card ? { creditCardId: v.creditCardId } : {}),
+    ...(!card && v.accountId ? { accountId: v.accountId } : {}),
     ...(v.personMemberId ? { personMemberId: v.personMemberId } : {}),
   };
 }
 
-/** Changed fields only; "" clears person/account and 0 clears the amount (I-46). */
+/**
+ * Changed fields only; "" clears person/account/card and 0 clears the amount (I-46). The
+ * card and the account are exclusive: switching the method clears the other one.
+ */
 export function toUpdateTemplate(
   t: QuickTemplate,
   v: TemplateValues,
 ): UpdateQuickTemplateRequest {
   const cur = toTemplateValues(t);
+  const card = v.paymentMethod === "CREDIT_CARD";
+  const accountId = card ? "" : v.accountId;
+  const creditCardId = card ? v.creditCardId : "";
   const body: UpdateQuickTemplateRequest = {};
   if (v.label.trim() !== cur.label) body.label = v.label.trim();
   if (v.description.trim() !== cur.description) {
@@ -124,7 +143,8 @@ export function toUpdateTemplate(
   if (v.paymentMethod !== cur.paymentMethod) {
     body.paymentMethod = v.paymentMethod;
   }
-  if (v.accountId !== cur.accountId) body.accountId = v.accountId;
+  if (accountId !== cur.accountId) body.accountId = accountId;
+  if (creditCardId !== cur.creditCardId) body.creditCardId = creditCardId;
   if (v.scope !== cur.scope) body.scope = v.scope;
   if (v.personMemberId !== cur.personMemberId) {
     body.personMemberId = v.personMemberId;
@@ -136,6 +156,7 @@ export function TemplateForm({
   householdId,
   template,
   accounts,
+  cards,
   categories,
   members,
   onDone,
@@ -145,6 +166,8 @@ export function TemplateForm({
   /** Present when editing. */
   template?: QuickTemplate;
   accounts: Account[];
+  /** Active cards (card purchase favorites). */
+  cards: CreditCard[];
   categories: Category[];
   members: Member[];
   onDone: (t: QuickTemplate) => void;
@@ -160,6 +183,8 @@ export function TemplateForm({
   const kind = useWatch({ control: form.control, name: "kind" });
   const scope = useWatch({ control: form.control, name: "scope" });
   const categoryId = useWatch({ control: form.control, name: "categoryId" });
+  const method = useWatch({ control: form.control, name: "paymentMethod" });
+  const onCard = method === "CREDIT_CARD";
 
   const onSubmit = form.handleSubmit(async (v) => {
     try {
@@ -197,6 +222,9 @@ export function TemplateForm({
               onClick={() => {
                 form.setValue("kind", k);
                 form.setValue("categoryId", "");
+                if (k === "INCOME" && onCard) {
+                  form.setValue("paymentMethod", "PIX");
+                }
               }}
             >
               {kindLabel[k]}
@@ -245,28 +273,56 @@ export function TemplateForm({
         ))}
       </SelectField>
       <div className="grid gap-3 sm:grid-cols-2">
-        <SelectField
-          label="Conta (opcional)"
-          error={errors.accountId?.message}
-          {...form.register("accountId")}
-        >
-          <option value="">Escolher na hora</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </SelectField>
+        {onCard ? (
+          <SelectField
+            label="Cartão"
+            error={errors.creditCardId?.message}
+            {...form.register("creditCardId")}
+          >
+            <option value="">Escolha o cartão</option>
+            {cards.map((c) => (
+              <option key={c.id} value={c.id}>
+                {cardName(c)}
+              </option>
+            ))}
+          </SelectField>
+        ) : (
+          <SelectField
+            label="Conta (opcional)"
+            error={errors.accountId?.message}
+            {...form.register("accountId")}
+          >
+            <option value="">Escolher na hora</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </SelectField>
+        )}
         <SelectField
           label="Meio"
           error={errors.paymentMethod?.message}
-          {...form.register("paymentMethod")}
+          {...form.register("paymentMethod", {
+            onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+              if (
+                e.target.value === "CREDIT_CARD" &&
+                !form.getValues("creditCardId") &&
+                cards.length === 1
+              ) {
+                form.setValue("creditCardId", cards[0].id);
+              }
+            },
+          })}
         >
           {paymentMethods.map((m) => (
             <option key={m} value={m}>
               {methodLabel[m]}
             </option>
           ))}
+          {(kind === "EXPENSE" && cards.length > 0) || onCard ? (
+            <option value="CREDIT_CARD">Cartão de crédito</option>
+          ) : null}
         </SelectField>
         <SelectField
           label="De quem é"
@@ -290,8 +346,9 @@ export function TemplateForm({
         </SelectField>
       </div>
       <p className="text-sm text-muted-foreground">
-        Com valor e conta preenchidos, o lançamento fica a um toque de
-        confirmar.
+        Com valor e conta (ou cartão) preenchidos, o lançamento fica a um toque
+        de confirmar. Favorito no cartão lança compra à vista; o número de
+        parcelas pode ser mudado na hora.
       </p>
       <FormError message={errors.root?.server?.message} />
       <div className="flex gap-2">
