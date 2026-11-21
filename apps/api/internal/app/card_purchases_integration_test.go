@@ -203,11 +203,6 @@ func TestCardPurchaseInInstallments(t *testing.T) {
 	if got.Description != "Geladeira" {
 		t.Fatalf("updated = %+v", got)
 	}
-	// Voiding a card purchase arrives with F4.6 (RN-019); nothing changes meanwhile.
-	if code := owner.expect(http.StatusUnprocessableEntity, http.MethodPost, base+"/"+tx.ID+"/void", nil,
-		"Idempotency-Key", uuid.NewString()).errorCode(t); code != "CARD_PURCHASE_VOID_UNAVAILABLE" {
-		t.Fatalf("got %s", code)
-	}
 	if c := api.consumption(h.ID); c != 120000+10001+5000 {
 		t.Fatalf("consumption = %d", c)
 	}

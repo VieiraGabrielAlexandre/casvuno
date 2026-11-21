@@ -112,6 +112,10 @@ func (c cardsCash) PayInvoice(ctx context.Context, householdID uuid.UUID, out ca
 	})
 }
 
+func (c ledgerCards) CancelInstallments(ctx context.Context, householdID, cardID, transactionID uuid.UUID) error {
+	return c.cards.CancelPurchase(ctx, householdID, cardID, transactionID)
+}
+
 // ledgerCash adapts the accounts module to ledger.Cash (direct payments and receipts of
 // obligations), keeping the two modules unaware of each other.
 type ledgerCash struct{ accounts *accounts.Service }

@@ -51,7 +51,15 @@ type Card struct {
 	IsActive       bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	// OutstandingCents is what is left to pay on all the card's invoices, future ones
+	// included (RN-018, I-17).
+	OutstandingCents int64
 }
+
+// AvailableLimitCents is the estimated available limit: the limit the family typed minus
+// what is left to pay on the invoices. It is not synchronised with the bank and may be
+// negative (the limit was lowered, or the bank allowed more) (RN-018, I-17).
+func (c Card) AvailableLimitCents() int64 { return c.LimitCents - c.OutstandingCents }
 
 // CreateInput is the data of a new card.
 type CreateInput struct {
@@ -301,7 +309,7 @@ func toCard(r store.GetCardRow) Card {
 	return Card{
 		ID: r.ID, Name: r.Name, HolderMemberID: r.HolderMemberID, LastFour: r.LastFour, LimitCents: r.LimitCents,
 		ClosingDay: int(r.ClosingDay), DueDay: int(r.DueDay), IsActive: r.IsActive,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, OutstandingCents: r.OutstandingCents,
 	}
 }
 

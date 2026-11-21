@@ -12,6 +12,22 @@ import (
 	"github.com/google/uuid"
 )
 
+const cancelPurchaseInstallments = `-- name: CancelPurchaseInstallments :exec
+UPDATE card_installments
+SET status = 'CANCELLED', updated_at = now()
+WHERE household_id = $1 AND transaction_id = $2 AND status = 'ACTIVE'
+`
+
+type CancelPurchaseInstallmentsParams struct {
+	HouseholdID   uuid.UUID
+	TransactionID uuid.UUID
+}
+
+func (q *Queries) CancelPurchaseInstallments(ctx context.Context, arg CancelPurchaseInstallmentsParams) error {
+	_, err := q.db.Exec(ctx, cancelPurchaseInstallments, arg.HouseholdID, arg.TransactionID)
+	return err
+}
+
 const cardOutstandingCents = `-- name: CardOutstandingCents :one
 SELECT ((SELECT COALESCE(sum(i.amount_cents), 0) FROM card_installments i
          WHERE i.household_id = $1 AND i.credit_card_id = $2 AND i.status = 'ACTIVE')
@@ -218,9 +234,18 @@ func (q *Queries) CreateInvoicePayment(ctx context.Context, arg CreateInvoicePay
 }
 
 const getCard = `-- name: GetCard :one
-SELECT id, name, holder_member_id, last_four, limit_cents, closing_day, due_day, is_active, created_at, updated_at
-FROM credit_cards
-WHERE household_id = $1 AND id = $2
+SELECT c.id, c.name, c.holder_member_id, c.last_four, c.limit_cents, c.closing_day, c.due_day, c.is_active,
+       c.created_at, c.updated_at,
+       ((SELECT COALESCE(sum(i.amount_cents), 0) FROM card_installments i
+         WHERE i.household_id = c.household_id AND i.credit_card_id = c.id AND i.status = 'ACTIVE')
+      + (SELECT COALESCE(sum(a.amount_cents), 0) FROM invoice_adjustments a
+         JOIN card_invoices v ON v.household_id = a.household_id AND v.id = a.card_invoice_id
+         WHERE a.household_id = c.household_id AND v.credit_card_id = c.id)
+      - (SELECT COALESCE(sum(p.amount_cents), 0) FROM invoice_payments p
+         JOIN card_invoices v ON v.household_id = p.household_id AND v.id = p.card_invoice_id
+         WHERE p.household_id = c.household_id AND v.credit_card_id = c.id))::bigint AS outstanding_cents
+FROM credit_cards c
+WHERE c.household_id = $1 AND c.id = $2
 `
 
 type GetCardParams struct {
@@ -229,16 +254,17 @@ type GetCardParams struct {
 }
 
 type GetCardRow struct {
-	ID             uuid.UUID
-	Name           string
-	HolderMemberID uuid.UUID
-	LastFour       *string
-	LimitCents     int64
-	ClosingDay     int16
-	DueDay         int16
-	IsActive       bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               uuid.UUID
+	Name             string
+	HolderMemberID   uuid.UUID
+	LastFour         *string
+	LimitCents       int64
+	ClosingDay       int16
+	DueDay           int16
+	IsActive         bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	OutstandingCents int64
 }
 
 func (q *Queries) GetCard(ctx context.Context, arg GetCardParams) (GetCardRow, error) {
@@ -255,6 +281,7 @@ func (q *Queries) GetCard(ctx context.Context, arg GetCardParams) (GetCardRow, e
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OutstandingCents,
 	)
 	return i, err
 }
@@ -408,10 +435,19 @@ func (q *Queries) ListCardInvoices(ctx context.Context, arg ListCardInvoicesPara
 }
 
 const listCards = `-- name: ListCards :many
-SELECT id, name, holder_member_id, last_four, limit_cents, closing_day, due_day, is_active, created_at, updated_at
-FROM credit_cards
-WHERE household_id = $1 AND ($2::boolean OR is_active)
-ORDER BY is_active DESC, lower(name), id
+SELECT c.id, c.name, c.holder_member_id, c.last_four, c.limit_cents, c.closing_day, c.due_day, c.is_active,
+       c.created_at, c.updated_at,
+       ((SELECT COALESCE(sum(i.amount_cents), 0) FROM card_installments i
+         WHERE i.household_id = c.household_id AND i.credit_card_id = c.id AND i.status = 'ACTIVE')
+      + (SELECT COALESCE(sum(a.amount_cents), 0) FROM invoice_adjustments a
+         JOIN card_invoices v ON v.household_id = a.household_id AND v.id = a.card_invoice_id
+         WHERE a.household_id = c.household_id AND v.credit_card_id = c.id)
+      - (SELECT COALESCE(sum(p.amount_cents), 0) FROM invoice_payments p
+         JOIN card_invoices v ON v.household_id = p.household_id AND v.id = p.card_invoice_id
+         WHERE p.household_id = c.household_id AND v.credit_card_id = c.id))::bigint AS outstanding_cents
+FROM credit_cards c
+WHERE c.household_id = $1 AND ($2::boolean OR c.is_active)
+ORDER BY c.is_active DESC, lower(c.name), c.id
 `
 
 type ListCardsParams struct {
@@ -420,18 +456,21 @@ type ListCardsParams struct {
 }
 
 type ListCardsRow struct {
-	ID             uuid.UUID
-	Name           string
-	HolderMemberID uuid.UUID
-	LastFour       *string
-	LimitCents     int64
-	ClosingDay     int16
-	DueDay         int16
-	IsActive       bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               uuid.UUID
+	Name             string
+	HolderMemberID   uuid.UUID
+	LastFour         *string
+	LimitCents       int64
+	ClosingDay       int16
+	DueDay           int16
+	IsActive         bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	OutstandingCents int64
 }
 
+// Cards with what is left to pay on all their invoices, future ones included (RN-018,
+// I-17): the base of the estimated available limit.
 func (q *Queries) ListCards(ctx context.Context, arg ListCardsParams) ([]ListCardsRow, error) {
 	rows, err := q.db.Query(ctx, listCards, arg.HouseholdID, arg.IncludeArchived)
 	if err != nil {
@@ -452,6 +491,7 @@ func (q *Queries) ListCards(ctx context.Context, arg ListCardsParams) ([]ListCar
 			&i.IsActive,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OutstandingCents,
 		); err != nil {
 			return nil, err
 		}
@@ -729,6 +769,51 @@ func (q *Queries) ListInvoices(ctx context.Context, arg ListInvoicesParams) ([]L
 	return items, nil
 }
 
+const listPurchaseInstallments = `-- name: ListPurchaseInstallments :many
+SELECT i.id, i.card_invoice_id, i.amount_cents, i.status
+FROM card_installments i
+WHERE i.household_id = $1 AND i.transaction_id = $2
+ORDER BY i.installment_number
+`
+
+type ListPurchaseInstallmentsParams struct {
+	HouseholdID   uuid.UUID
+	TransactionID uuid.UUID
+}
+
+type ListPurchaseInstallmentsRow struct {
+	ID            uuid.UUID
+	CardInvoiceID uuid.UUID
+	AmountCents   int64
+	Status        string
+}
+
+// The installments of one purchase, with their invoices (void, F4.6).
+func (q *Queries) ListPurchaseInstallments(ctx context.Context, arg ListPurchaseInstallmentsParams) ([]ListPurchaseInstallmentsRow, error) {
+	rows, err := q.db.Query(ctx, listPurchaseInstallments, arg.HouseholdID, arg.TransactionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPurchaseInstallmentsRow
+	for rows.Next() {
+		var i ListPurchaseInstallmentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CardInvoiceID,
+			&i.AmountCents,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockCard = `-- name: LockCard :one
 SELECT id FROM credit_cards WHERE household_id = $1 AND id = $2 FOR UPDATE
 `
@@ -824,6 +909,28 @@ type LockOpenInvoicesParams struct {
 // places installments on it. An invoice closed meanwhile is re-checked and left out.
 func (q *Queries) LockOpenInvoices(ctx context.Context, arg LockOpenInvoicesParams) error {
 	_, err := q.db.Exec(ctx, lockOpenInvoices, arg.HouseholdID, arg.CreditCardID)
+	return err
+}
+
+const lockPurchaseInvoices = `-- name: LockPurchaseInvoices :exec
+SELECT v.id
+FROM card_invoices v
+WHERE v.household_id = $1
+  AND v.id IN (SELECT i.card_invoice_id FROM card_installments i
+               WHERE i.household_id = $1 AND i.transaction_id = $2)
+ORDER BY v.cycle_start_on
+FOR UPDATE
+`
+
+type LockPurchaseInvoicesParams struct {
+	HouseholdID   uuid.UUID
+	TransactionID uuid.UUID
+}
+
+// Locks the invoices of one purchase (oldest first, as purchases do) before its installments
+// are cancelled, so no close, payment or adjustment runs on them meanwhile.
+func (q *Queries) LockPurchaseInvoices(ctx context.Context, arg LockPurchaseInvoicesParams) error {
+	_, err := q.db.Exec(ctx, lockPurchaseInvoices, arg.HouseholdID, arg.TransactionID)
 	return err
 }
 

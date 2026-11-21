@@ -264,10 +264,7 @@ func (s *Service) Void(ctx context.Context, m authctx.Membership, id uuid.UUID) 
 			return nil
 		}
 		if t.CreditCardID != nil {
-			// Voiding a card purchase cancels its installments while the invoices are OPEN
-			// (RN-019); it arrives with F4.6.
-			return kernel.NewError(kernel.ErrInvariant, "CARD_PURCHASE_VOID_UNAVAILABLE",
-				"Ainda não é possível cancelar uma compra no cartão.")
+			return s.voidCardPurchase(ctx, q, m, t)
 		}
 		obligationID, err := q.GetObligationIDByTransaction(ctx, store.GetObligationIDByTransactionParams{
 			HouseholdID: m.HouseholdID, TransactionID: &id,
@@ -309,6 +306,24 @@ func (s *Service) Void(ctx context.Context, m authctx.Membership, id uuid.UUID) 
 		return Transaction{}, err
 	}
 	return s.Get(ctx, m, id)
+}
+
+// voidCardPurchase voids a card purchase: its installments are cancelled (only while every
+// invoice is OPEN and keeps total >= paid; RN-019, I-18) and the transaction leaves the
+// consumption. No cash moves: the money only left through invoice payments, which stay. Lock
+// order: transaction (already locked), card, then the invoices (in CancelInstallments).
+func (s *Service) voidCardPurchase(ctx context.Context, q *store.Queries, m authctx.Membership, t Transaction) error {
+	if err := s.cards.CancelInstallments(ctx, m.HouseholdID, *t.CreditCardID, t.ID); err != nil {
+		return err
+	}
+	if err := q.VoidTransaction(ctx, store.VoidTransactionParams{HouseholdID: m.HouseholdID, ID: t.ID}); err != nil {
+		return fmt.Errorf("void transaction: %w", err)
+	}
+	return s.audit.Record(ctx, audit.Event{
+		HouseholdID: m.HouseholdID, ActorUserID: m.UserID,
+		EntityType: "transaction", EntityID: t.ID, Action: "transaction.voided",
+		Metadata: map[string]any{"creditCardId": t.CreditCardID.String()},
+	})
 }
 
 // CancelForecast cancels a forecast that was never paid (PLANNED → CANCELLED): it leaves the

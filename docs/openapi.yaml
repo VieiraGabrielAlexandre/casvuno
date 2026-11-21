@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.14.0
+  version: 0.15.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -936,7 +936,10 @@ paths:
         (`REVERSAL`, direção oposta, mesma conta e valor) datado de hoje no fuso da família (ou da data do pagamento,
         se posterior). Os pagamentos ficam no histórico. Sai do consumo e dos compromissos; o dinheiro volta.
         Cancelar de novo não muda nada. Conta arquivada envolvida → 422 `ACCOUNT_ARCHIVED` (restaure-a antes).
-        Compra no cartão ainda não pode ser cancelada → 422 `CARD_PURCHASE_VOID_UNAVAILABLE`.
+        **Compra no cartão** (RN-019): as parcelas viram `CANCELLED` e saem das faturas; nenhum caixa se move (os
+        pagamentos de fatura ficam). Bloqueado se alguma parcela estiver em fatura fechada (422
+        `CARD_PURCHASE_ON_CLOSED_INVOICE`) ou se uma fatura ficaria com total menor que o já pago (422
+        `CARD_PURCHASE_VOID_EXCEEDS_BALANCE`); nesses casos a correção é um ajuste na fatura.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       responses:
@@ -1570,7 +1573,7 @@ components:
     Card:
       type: object
       additionalProperties: false
-      required: [id, name, holderMemberId, lastFour, limitCents, closingDay, dueDay, isActive, createdAt, updatedAt]
+      required: [id, name, holderMemberId, lastFour, limitCents, closingDay, dueDay, isActive, createdAt, updatedAt, outstandingCents, estimatedAvailableLimitCents]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -1582,6 +1585,15 @@ components:
         isActive: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        outstandingCents:
+          type: integer
+          minimum: 0
+          description: Saldo em aberto de todas as faturas do cartão, inclusive as futuras (compromisso).
+        estimatedAvailableLimitCents:
+          type: integer
+          description: |
+            Limite disponível **estimado** (RN-018) = `limitCents − outstandingCents`. Não é sincronizado com o banco e
+            pode ficar negativo (limite reduzido ou banco que liberou mais).
 
     CardList:
       type: object

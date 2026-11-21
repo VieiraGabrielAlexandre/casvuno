@@ -625,7 +625,10 @@ export interface paths {
          *     (`REVERSAL`, direção oposta, mesma conta e valor) datado de hoje no fuso da família (ou da data do pagamento,
          *     se posterior). Os pagamentos ficam no histórico. Sai do consumo e dos compromissos; o dinheiro volta.
          *     Cancelar de novo não muda nada. Conta arquivada envolvida → 422 `ACCOUNT_ARCHIVED` (restaure-a antes).
-         *     Compra no cartão ainda não pode ser cancelada → 422 `CARD_PURCHASE_VOID_UNAVAILABLE`.
+         *     **Compra no cartão** (RN-019): as parcelas viram `CANCELLED` e saem das faturas; nenhum caixa se move (os
+         *     pagamentos de fatura ficam). Bloqueado se alguma parcela estiver em fatura fechada (422
+         *     `CARD_PURCHASE_ON_CLOSED_INVOICE`) ou se uma fatura ficaria com total menor que o já pago (422
+         *     `CARD_PURCHASE_VOID_EXCEEDS_BALANCE`); nesses casos a correção é um ajuste na fatura.
          */
         post: operations["voidTransaction"];
         delete?: never;
@@ -1020,6 +1023,13 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            /** @description Saldo em aberto de todas as faturas do cartão, inclusive as futuras (compromisso). */
+            outstandingCents: number;
+            /**
+             * @description Limite disponível **estimado** (RN-018) = `limitCents − outstandingCents`. Não é sincronizado com o banco e
+             *     pode ficar negativo (limite reduzido ou banco que liberou mais).
+             */
+            estimatedAvailableLimitCents: number;
         };
         CardList: {
             items: components["schemas"]["Card"][];
