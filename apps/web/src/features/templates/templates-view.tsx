@@ -13,14 +13,21 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAccounts } from "@/features/accounts/hooks";
+import { useCards } from "@/features/cards/hooks";
+import { cardName } from "@/features/cards/labels";
 import { useCategories } from "@/features/categories/hooks";
 import { useMembers } from "@/features/households/hooks";
 import { useDeleteTemplate, useTemplates } from "@/features/ledger/hooks";
-import { kindLabel, methodLabel, namesById } from "@/features/ledger/labels";
+import {
+  kindLabel,
+  namesById,
+  transactionMethodLabel,
+} from "@/features/ledger/labels";
 import {
   errorMessage,
   type Account,
   type Category,
+  type CreditCard,
   type Member,
   type QuickTemplate,
 } from "@/lib/api/client";
@@ -32,15 +39,21 @@ import { TemplateForm } from "./template-form";
 export function TemplatesView({ householdId }: { householdId: string }) {
   const templates = useTemplates(householdId);
   const accounts = useAccounts(householdId);
+  const cards = useCards(householdId, true);
   const categories = useCategories(householdId, true);
   const members = useMembers(householdId);
   const [message, setMessage] = useState<string | null>(null);
-  const failed = [templates, accounts, categories, members].find(
+  const failed = [templates, accounts, cards, categories, members].find(
     (q) => q.isError,
   );
   const ready =
-    templates.data && accounts.data && categories.data && members.data;
+    templates.data &&
+    accounts.data &&
+    cards.data &&
+    categories.data &&
+    members.data;
   const activeAccounts = accounts.data?.items.filter((a) => a.isActive) ?? [];
+  const activeCards = cards.data?.items.filter((c) => c.isActive) ?? [];
   const activeMembers =
     members.data?.filter((m) => m.status === "ACTIVE") ?? [];
 
@@ -87,6 +100,8 @@ export function TemplatesView({ householdId }: { householdId: string }) {
                       template={t}
                       accounts={activeAccounts}
                       allAccounts={accounts.data.items}
+                      cards={activeCards}
+                      allCards={cards.data.items}
                       categories={categories.data}
                       members={activeMembers}
                       onMessage={setMessage}
@@ -105,6 +120,7 @@ export function TemplatesView({ householdId }: { householdId: string }) {
               <TemplateForm
                 householdId={householdId}
                 accounts={activeAccounts}
+                cards={activeCards}
                 categories={categories.data}
                 members={activeMembers}
                 onDone={(t) => setMessage(`Favorito "${t.label}" criado.`)}
@@ -122,6 +138,8 @@ function TemplateRow({
   template: t,
   accounts,
   allAccounts,
+  cards,
+  allCards,
   categories,
   members,
   onMessage,
@@ -130,6 +148,8 @@ function TemplateRow({
   template: QuickTemplate;
   accounts: Account[];
   allAccounts: Account[];
+  cards: CreditCard[];
+  allCards: CreditCard[];
   categories: Category[];
   members: Member[];
   onMessage: (m: string) => void;
@@ -137,9 +157,14 @@ function TemplateRow({
   const [mode, setMode] = useState<"view" | "edit" | "delete">("view");
   const remove = useDeleteTemplate(householdId);
   const category = namesById(categories).get(t.categoryId);
+  const card = t.creditCardId
+    ? allCards.find((c) => c.id === t.creditCardId)
+    : undefined;
   const account = t.accountId
     ? namesById(allAccounts).get(t.accountId)
-    : undefined;
+    : card
+      ? cardName(card)
+      : undefined;
 
   return (
     <li className="flex flex-col gap-2 py-3">
@@ -148,7 +173,7 @@ function TemplateRow({
           <span className="font-medium">{t.label}</span>
           <span className="text-sm text-muted-foreground">
             {kindLabel[t.kind]} · {category ?? "Categoria"} ·{" "}
-            {methodLabel[t.paymentMethod]}
+            {transactionMethodLabel[t.paymentMethod]}
             {account ? ` · ${account}` : ""}
           </span>
         </div>
@@ -177,6 +202,7 @@ function TemplateRow({
           householdId={householdId}
           template={t}
           accounts={accounts}
+          cards={cards}
           categories={categories}
           members={members}
           onCancel={() => setMode("view")}

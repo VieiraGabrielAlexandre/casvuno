@@ -126,9 +126,10 @@ func (q *Queries) CreateObligationPayment(ctx context.Context, arg CreateObligat
 
 const createQuickTemplate = `-- name: CreateQuickTemplate :exec
 INSERT INTO quick_templates (id, household_id, member_id, label, kind, description, default_amount_cents, category_id,
-                             scope, person_member_id, payment_method, account_id, sort_order)
+                             scope, person_member_id, payment_method, account_id, credit_card_id, sort_order)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, $13)
+        $9, $10, $11, $12, $13,
+        $14)
 `
 
 type CreateQuickTemplateParams struct {
@@ -144,6 +145,7 @@ type CreateQuickTemplateParams struct {
 	PersonMemberID     *uuid.UUID
 	PaymentMethod      string
 	AccountID          *uuid.UUID
+	CreditCardID       *uuid.UUID
 	SortOrder          int32
 }
 
@@ -161,6 +163,7 @@ func (q *Queries) CreateQuickTemplate(ctx context.Context, arg CreateQuickTempla
 		arg.PersonMemberID,
 		arg.PaymentMethod,
 		arg.AccountID,
+		arg.CreditCardID,
 		arg.SortOrder,
 	)
 	return err
@@ -169,10 +172,10 @@ func (q *Queries) CreateQuickTemplate(ctx context.Context, arg CreateQuickTempla
 const createTransaction = `-- name: CreateTransaction :exec
 INSERT INTO transactions (id, household_id, kind, scope, person_member_id, created_by_member_id, description,
                           merchant, notes, amount_cents, category_id, occurred_on, payment_method, account_id,
-                          credit_card_id)
+                          credit_card_id, installment_count)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12, $13,
-        $14, $15)
+        $14, $15, $16)
 `
 
 type CreateTransactionParams struct {
@@ -191,6 +194,7 @@ type CreateTransactionParams struct {
 	PaymentMethod     string
 	AccountID         *uuid.UUID
 	CreditCardID      *uuid.UUID
+	InstallmentCount  *int16
 }
 
 func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionParams) error {
@@ -210,6 +214,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		arg.PaymentMethod,
 		arg.AccountID,
 		arg.CreditCardID,
+		arg.InstallmentCount,
 	)
 	return err
 }
@@ -313,7 +318,7 @@ func (q *Queries) GetObligationIDByTransaction(ctx context.Context, arg GetOblig
 
 const getQuickTemplate = `-- name: GetQuickTemplate :one
 SELECT id, label, kind, description, default_amount_cents, category_id, scope, person_member_id, payment_method,
-       account_id, sort_order, created_at, updated_at
+       account_id, credit_card_id, sort_order, created_at, updated_at
 FROM quick_templates
 WHERE household_id = $1 AND member_id = $2 AND id = $3
 `
@@ -335,6 +340,7 @@ type GetQuickTemplateRow struct {
 	PersonMemberID     *uuid.UUID
 	PaymentMethod      string
 	AccountID          *uuid.UUID
+	CreditCardID       *uuid.UUID
 	SortOrder          int32
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -354,6 +360,7 @@ func (q *Queries) GetQuickTemplate(ctx context.Context, arg GetQuickTemplatePara
 		&i.PersonMemberID,
 		&i.PaymentMethod,
 		&i.AccountID,
+		&i.CreditCardID,
 		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -363,7 +370,8 @@ func (q *Queries) GetQuickTemplate(ctx context.Context, arg GetQuickTemplatePara
 
 const getTransaction = `-- name: GetTransaction :one
 SELECT id, kind, scope, person_member_id, created_by_member_id, description, merchant, notes, amount_cents,
-       category_id, occurred_on, payment_method, account_id, credit_card_id, status, created_at, updated_at
+       category_id, occurred_on, payment_method, account_id, credit_card_id, installment_count, status, created_at,
+       updated_at
 FROM transactions
 WHERE household_id = $1 AND id = $2
 `
@@ -388,6 +396,7 @@ type GetTransactionRow struct {
 	PaymentMethod     string
 	AccountID         *uuid.UUID
 	CreditCardID      *uuid.UUID
+	InstallmentCount  *int16
 	Status            string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -411,6 +420,7 @@ func (q *Queries) GetTransaction(ctx context.Context, arg GetTransactionParams) 
 		&i.PaymentMethod,
 		&i.AccountID,
 		&i.CreditCardID,
+		&i.InstallmentCount,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -577,7 +587,7 @@ func (q *Queries) ListObligations(ctx context.Context, arg ListObligationsParams
 
 const listQuickTemplates = `-- name: ListQuickTemplates :many
 SELECT id, label, kind, description, default_amount_cents, category_id, scope, person_member_id, payment_method,
-       account_id, sort_order, created_at, updated_at
+       account_id, credit_card_id, sort_order, created_at, updated_at
 FROM quick_templates
 WHERE household_id = $1 AND member_id = $2
 ORDER BY sort_order, lower(label), id
@@ -599,6 +609,7 @@ type ListQuickTemplatesRow struct {
 	PersonMemberID     *uuid.UUID
 	PaymentMethod      string
 	AccountID          *uuid.UUID
+	CreditCardID       *uuid.UUID
 	SortOrder          int32
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -625,6 +636,7 @@ func (q *Queries) ListQuickTemplates(ctx context.Context, arg ListQuickTemplates
 			&i.PersonMemberID,
 			&i.PaymentMethod,
 			&i.AccountID,
+			&i.CreditCardID,
 			&i.SortOrder,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -641,8 +653,8 @@ func (q *Queries) ListQuickTemplates(ctx context.Context, arg ListQuickTemplates
 
 const listTransactions = `-- name: ListTransactions :many
 SELECT t.id, t.kind, t.scope, t.person_member_id, t.created_by_member_id, t.description, t.merchant, t.notes,
-       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.credit_card_id, t.status,
-       t.created_at, t.updated_at
+       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.credit_card_id,
+       t.installment_count, t.status, t.created_at, t.updated_at
 FROM transactions t
 WHERE t.household_id = $1
   AND ($2::text IS NULL OR t.status = $2::text)
@@ -702,6 +714,7 @@ type ListTransactionsRow struct {
 	PaymentMethod     string
 	AccountID         *uuid.UUID
 	CreditCardID      *uuid.UUID
+	InstallmentCount  *int16
 	Status            string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -752,6 +765,7 @@ func (q *Queries) ListTransactions(ctx context.Context, arg ListTransactionsPara
 			&i.PaymentMethod,
 			&i.AccountID,
 			&i.CreditCardID,
+			&i.InstallmentCount,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -910,8 +924,9 @@ const updateQuickTemplate = `-- name: UpdateQuickTemplate :exec
 UPDATE quick_templates
 SET label = $1, description = $2, default_amount_cents = $3,
     category_id = $4, scope = $5, person_member_id = $6,
-    payment_method = $7, account_id = $8, sort_order = $9, updated_at = now()
-WHERE household_id = $10 AND member_id = $11 AND id = $12
+    payment_method = $7, account_id = $8, credit_card_id = $9,
+    sort_order = $10, updated_at = now()
+WHERE household_id = $11 AND member_id = $12 AND id = $13
 `
 
 type UpdateQuickTemplateParams struct {
@@ -923,6 +938,7 @@ type UpdateQuickTemplateParams struct {
 	PersonMemberID     *uuid.UUID
 	PaymentMethod      string
 	AccountID          *uuid.UUID
+	CreditCardID       *uuid.UUID
 	SortOrder          int32
 	HouseholdID        uuid.UUID
 	MemberID           uuid.UUID
@@ -939,6 +955,7 @@ func (q *Queries) UpdateQuickTemplate(ctx context.Context, arg UpdateQuickTempla
 		arg.PersonMemberID,
 		arg.PaymentMethod,
 		arg.AccountID,
+		arg.CreditCardID,
 		arg.SortOrder,
 		arg.HouseholdID,
 		arg.MemberID,

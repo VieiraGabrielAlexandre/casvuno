@@ -142,6 +142,7 @@ type Transaction struct {
 	PaymentMethod     string
 	AccountID         *uuid.UUID // nil for a card purchase
 	CreditCardID      *uuid.UUID // set only for a card purchase
+	InstallmentCount  *int16     // installments of a card purchase (F4.7); nil otherwise
 	Status            string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -273,6 +274,7 @@ func (s *Service) Create(ctx context.Context, m authctx.Membership, in CreateInp
 // cash movement: the invoice is the commitment and its payment the cash (ADR 0002, INV-03).
 func (s *Service) createCardPurchase(ctx context.Context, m authctx.Membership, txID uuid.UUID, in CreateInput) ([]CardInstallment, bool, error) {
 	cardID := *in.Payment.CardID
+	count := int16(in.Payment.Installments) //nolint:gosec // validated 1..60 (normalizeCardPurchase)
 	// Lock the card before the insert below, whose foreign key takes KEY SHARE on it (a lock
 	// upgrade afterwards would deadlock concurrent purchases, ADR 0007).
 	if err := s.cards.RequireActiveCard(ctx, m.HouseholdID, cardID, "payment.cardId"); err != nil {
@@ -283,6 +285,7 @@ func (s *Service) createCardPurchase(ctx context.Context, m authctx.Membership, 
 		CreatedByMemberID: m.MemberID, Description: in.Description, Merchant: in.Merchant, Notes: in.Notes,
 		AmountCents: in.AmountCents, CategoryID: in.CategoryID, OccurredOn: in.OccurredOn,
 		PaymentMethod: MethodCreditCard, CreditCardID: &cardID,
+		InstallmentCount: &count,
 	}); err != nil {
 		return nil, false, fmt.Errorf("create transaction: %w", err)
 	}

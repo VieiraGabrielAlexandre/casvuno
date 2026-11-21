@@ -59,6 +59,9 @@ export function HouseholdView({ id }: { id: string }) {
           <Link href={`/accounts?household=${h.id}`} className="underline">
             Contas
           </Link>
+          <Link href={`/cards?household=${h.id}`} className="underline">
+            Cartões
+          </Link>
           <Link href={`/transfers?household=${h.id}`} className="underline">
             Transferências
           </Link>

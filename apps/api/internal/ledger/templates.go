@@ -37,6 +37,7 @@ type QuickTemplate struct {
 	PersonMemberID     *uuid.UUID
 	PaymentMethod      string
 	AccountID          *uuid.UUID
+	CreditCardID       *uuid.UUID // a card purchase template (CREDIT_CARD, F4.7)
 	SortOrder          int32
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -53,11 +54,12 @@ type TemplateInput struct {
 	PersonMemberID     *uuid.UUID
 	PaymentMethod      string
 	AccountID          *uuid.UUID
+	CreditCardID       *uuid.UUID
 	SortOrder          *int32
 }
 
 // TemplateUpdate edits a quick template; nil fields stay. The kind never changes. An empty
-// PersonMemberID or AccountID clears it; DefaultAmountCents 0 clears the amount.
+// PersonMemberID, AccountID or CreditCardID clears it; DefaultAmountCents 0 clears the amount.
 type TemplateUpdate struct {
 	Label              *string
 	Description        *string
@@ -67,6 +69,7 @@ type TemplateUpdate struct {
 	PersonMemberID     *string
 	PaymentMethod      *string
 	AccountID          *string
+	CreditCardID       *string
 	SortOrder          *int32
 }
 
@@ -88,12 +91,13 @@ func (s *Service) ListTemplates(ctx context.Context, m authctx.Membership) ([]Qu
 }
 
 // CreateTemplate stores a quick template for the member. Its references must be usable now
-// (active category of the same kind, active account, active member); they are checked again
-// when an entry is created from it.
+// (active category of the same kind, active account or card, active member); they are
+// checked again when an entry is created from it.
 func (s *Service) CreateTemplate(ctx context.Context, m authctx.Membership, in TemplateInput) (QuickTemplate, error) {
 	t := QuickTemplate{
 		Kind: in.Kind, DefaultAmountCents: in.DefaultAmountCents, CategoryID: in.CategoryID, Scope: in.Scope,
 		PersonMemberID: in.PersonMemberID, PaymentMethod: in.PaymentMethod, AccountID: in.AccountID,
+		CreditCardID: in.CreditCardID,
 	}
 	if in.Kind != KindExpense && in.Kind != KindIncome {
 		return QuickTemplate{}, validation("kind", "oneof=EXPENSE INCOME", "Tipo de lançamento inválido.")
@@ -129,13 +133,14 @@ func (s *Service) CreateTemplate(ctx context.Context, m authctx.Membership, in T
 		if in.SortOrder != nil {
 			t.SortOrder = *in.SortOrder
 		}
-		if err := s.checkTemplateRefs(ctx, m.HouseholdID, t, true, true, true); err != nil {
+		if err := s.checkTemplateRefs(ctx, m.HouseholdID, t, true, true, true, true); err != nil {
 			return err
 		}
 		if err := q.CreateQuickTemplate(ctx, store.CreateQuickTemplateParams{
 			ID: id, HouseholdID: m.HouseholdID, MemberID: m.MemberID, Label: t.Label, Kind: t.Kind,
 			Description: t.Description, DefaultAmountCents: t.DefaultAmountCents, CategoryID: t.CategoryID, Scope: t.Scope,
-			PersonMemberID: t.PersonMemberID, PaymentMethod: t.PaymentMethod, AccountID: t.AccountID, SortOrder: t.SortOrder,
+			PersonMemberID: t.PersonMemberID, PaymentMethod: t.PaymentMethod, AccountID: t.AccountID,
+			CreditCardID: t.CreditCardID, SortOrder: t.SortOrder,
 		}); err != nil {
 			return fmt.Errorf("create quick template: %w", err)
 		}
@@ -170,13 +175,15 @@ func (s *Service) UpdateTemplate(ctx context.Context, m authctx.Membership, id u
 			return nil
 		}
 		if err := s.checkTemplateRefs(ctx, m.HouseholdID, next,
-			next.CategoryID != cur.CategoryID, !equalID(next.PersonMemberID, cur.PersonMemberID), !equalID(next.AccountID, cur.AccountID)); err != nil {
+			next.CategoryID != cur.CategoryID, !equalID(next.PersonMemberID, cur.PersonMemberID), !equalID(next.AccountID, cur.AccountID),
+			!equalID(next.CreditCardID, cur.CreditCardID)); err != nil {
 			return err
 		}
 		if err := q.UpdateQuickTemplate(ctx, store.UpdateQuickTemplateParams{
 			HouseholdID: m.HouseholdID, MemberID: m.MemberID, ID: id, Label: next.Label, Description: next.Description,
 			DefaultAmountCents: next.DefaultAmountCents, CategoryID: next.CategoryID, Scope: next.Scope,
-			PersonMemberID: next.PersonMemberID, PaymentMethod: next.PaymentMethod, AccountID: next.AccountID, SortOrder: next.SortOrder,
+			PersonMemberID: next.PersonMemberID, PaymentMethod: next.PaymentMethod, AccountID: next.AccountID,
+			CreditCardID: next.CreditCardID, SortOrder: next.SortOrder,
 		}); err != nil {
 			return fmt.Errorf("update quick template: %w", err)
 		}
@@ -225,7 +232,7 @@ func (s *Service) recordTemplate(ctx context.Context, m authctx.Membership, id u
 }
 
 // checkTemplateRefs checks the selected references against the household (ADR 0006).
-func (s *Service) checkTemplateRefs(ctx context.Context, householdID uuid.UUID, t QuickTemplate, category, person, account bool) error {
+func (s *Service) checkTemplateRefs(ctx context.Context, householdID uuid.UUID, t QuickTemplate, category, person, account, card bool) error {
 	ref := CreateInput{Kind: t.Kind, CategoryID: t.CategoryID}
 	if person {
 		ref.PersonMemberID = t.PersonMemberID
@@ -236,7 +243,12 @@ func (s *Service) checkTemplateRefs(ctx context.Context, householdID uuid.UUID, 
 		}
 	}
 	if account && t.AccountID != nil {
-		return s.cash.RequireActiveAccount(ctx, householdID, *t.AccountID, "accountId")
+		if err := s.cash.RequireActiveAccount(ctx, householdID, *t.AccountID, "accountId"); err != nil {
+			return err
+		}
+	}
+	if card && t.CreditCardID != nil {
+		return s.cards.RequireActiveCard(ctx, householdID, *t.CreditCardID, "creditCardId")
 	}
 	return nil
 }
@@ -279,6 +291,11 @@ func applyTemplateUpdate(cur QuickTemplate, in TemplateUpdate) (QuickTemplate, e
 			return cur, err
 		}
 	}
+	if in.CreditCardID != nil {
+		if next.CreditCardID, err = clearableID("creditCardId", *in.CreditCardID); err != nil {
+			return cur, err
+		}
+	}
 	if in.SortOrder != nil {
 		next.SortOrder = *in.SortOrder
 	}
@@ -301,8 +318,22 @@ func validTemplate(t QuickTemplate, sortOrder *int32) error {
 	default:
 		return validation("scope", "oneof=PERSONAL FAMILY", "Escopo inválido.")
 	}
-	if !accountMethods[t.PaymentMethod] {
-		return validation("paymentMethod", "oneof=PIX DEBIT CASH BANK_TRANSFER BOLETO OTHER", "Meio de pagamento inválido.")
+	switch {
+	case t.PaymentMethod == MethodCreditCard:
+		// A card purchase template (I-50): expense only, the card replaces the account.
+		if t.Kind != KindExpense {
+			return validation("paymentMethod", "expense_only", "Receita não pode ser no cartão de crédito.")
+		}
+		if t.CreditCardID == nil {
+			return validation("creditCardId", "required_for_credit_card", "Escolha o cartão.")
+		}
+		if t.AccountID != nil {
+			return validation("accountId", "excluded_with_credit_card", "Compra no cartão não usa conta.")
+		}
+	case !accountMethods[t.PaymentMethod]:
+		return validation("paymentMethod", "oneof=PIX DEBIT CASH BANK_TRANSFER BOLETO CREDIT_CARD OTHER", "Meio de pagamento inválido.")
+	case t.CreditCardID != nil:
+		return validation("creditCardId", "only_with_credit_card", "Cartão só vale para o meio cartão de crédito.")
 	}
 	if sortOrder != nil && (*sortOrder < 0 || *sortOrder > maxSortOrder) {
 		return validation("sortOrder", fmt.Sprintf("range=0..%d", maxSortOrder), "Ordem inválida.")
@@ -324,6 +355,7 @@ func templateChanges(cur, next QuickTemplate) []string {
 		{"personMemberId", equalID(cur.PersonMemberID, next.PersonMemberID)},
 		{"paymentMethod", cur.PaymentMethod == next.PaymentMethod},
 		{"accountId", equalID(cur.AccountID, next.AccountID)},
+		{"creditCardId", equalID(cur.CreditCardID, next.CreditCardID)},
 		{"sortOrder", cur.SortOrder == next.SortOrder},
 	} {
 		if !c.same {

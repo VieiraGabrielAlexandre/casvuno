@@ -1,10 +1,10 @@
 -- name: CreateTransaction :exec
 INSERT INTO transactions (id, household_id, kind, scope, person_member_id, created_by_member_id, description,
                           merchant, notes, amount_cents, category_id, occurred_on, payment_method, account_id,
-                          credit_card_id)
+                          credit_card_id, installment_count)
 VALUES (@id, @household_id, @kind, @scope, sqlc.narg(person_member_id), @created_by_member_id, @description,
         sqlc.narg(merchant), sqlc.narg(notes), @amount_cents, @category_id, @occurred_on, @payment_method,
-        sqlc.narg(account_id), sqlc.narg(credit_card_id));
+        sqlc.narg(account_id), sqlc.narg(credit_card_id), sqlc.narg(installment_count));
 
 -- name: CreateObligation :exec
 INSERT INTO obligations (id, household_id, transaction_id, kind, source, status, amount_cents, due_on, description,
@@ -21,7 +21,8 @@ VALUES (@id, @household_id, @obligation_id, @account_movement_id, @amount_cents,
 
 -- name: GetTransaction :one
 SELECT id, kind, scope, person_member_id, created_by_member_id, description, merchant, notes, amount_cents,
-       category_id, occurred_on, payment_method, account_id, credit_card_id, status, created_at, updated_at
+       category_id, occurred_on, payment_method, account_id, credit_card_id, installment_count, status, created_at,
+       updated_at
 FROM transactions
 WHERE household_id = @household_id AND id = @id;
 
@@ -86,8 +87,8 @@ WHERE household_id = @household_id AND id = @id AND status = 'PLANNED';
 -- serves "repeat last" (createdBy=me).
 -- name: ListTransactions :many
 SELECT t.id, t.kind, t.scope, t.person_member_id, t.created_by_member_id, t.description, t.merchant, t.notes,
-       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.credit_card_id, t.status,
-       t.created_at, t.updated_at
+       t.amount_cents, t.category_id, t.occurred_on, t.payment_method, t.account_id, t.credit_card_id,
+       t.installment_count, t.status, t.created_at, t.updated_at
 FROM transactions t
 WHERE t.household_id = @household_id
   AND (sqlc.narg(status)::text IS NULL OR t.status = sqlc.narg(status)::text)
@@ -144,14 +145,14 @@ WHERE household_id = @household_id AND id = @id AND status <> 'CANCELLED';
 -- Quick templates are private to their member (I-46): every query filters by member too.
 -- name: ListQuickTemplates :many
 SELECT id, label, kind, description, default_amount_cents, category_id, scope, person_member_id, payment_method,
-       account_id, sort_order, created_at, updated_at
+       account_id, credit_card_id, sort_order, created_at, updated_at
 FROM quick_templates
 WHERE household_id = @household_id AND member_id = @member_id
 ORDER BY sort_order, lower(label), id;
 
 -- name: GetQuickTemplate :one
 SELECT id, label, kind, description, default_amount_cents, category_id, scope, person_member_id, payment_method,
-       account_id, sort_order, created_at, updated_at
+       account_id, credit_card_id, sort_order, created_at, updated_at
 FROM quick_templates
 WHERE household_id = @household_id AND member_id = @member_id AND id = @id;
 
@@ -171,15 +172,17 @@ WHERE household_id = @household_id AND member_id = @member_id;
 
 -- name: CreateQuickTemplate :exec
 INSERT INTO quick_templates (id, household_id, member_id, label, kind, description, default_amount_cents, category_id,
-                             scope, person_member_id, payment_method, account_id, sort_order)
+                             scope, person_member_id, payment_method, account_id, credit_card_id, sort_order)
 VALUES (@id, @household_id, @member_id, @label, @kind, @description, sqlc.narg(default_amount_cents), @category_id,
-        @scope, sqlc.narg(person_member_id), @payment_method, sqlc.narg(account_id), @sort_order);
+        @scope, sqlc.narg(person_member_id), @payment_method, sqlc.narg(account_id), sqlc.narg(credit_card_id),
+        @sort_order);
 
 -- name: UpdateQuickTemplate :exec
 UPDATE quick_templates
 SET label = @label, description = @description, default_amount_cents = sqlc.narg(default_amount_cents),
     category_id = @category_id, scope = @scope, person_member_id = sqlc.narg(person_member_id),
-    payment_method = @payment_method, account_id = sqlc.narg(account_id), sort_order = @sort_order, updated_at = now()
+    payment_method = @payment_method, account_id = sqlc.narg(account_id), credit_card_id = sqlc.narg(credit_card_id),
+    sort_order = @sort_order, updated_at = now()
 WHERE household_id = @household_id AND member_id = @member_id AND id = @id;
 
 -- name: DeleteQuickTemplate :execrows

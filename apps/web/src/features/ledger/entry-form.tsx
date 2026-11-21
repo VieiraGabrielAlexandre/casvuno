@@ -9,10 +9,12 @@ import { FormError, FormField } from "@/components/form-field";
 import { MoneyInput } from "@/components/money-input";
 import { SelectField } from "@/components/select-field";
 import { Button } from "@/components/ui/button";
+import { cardName } from "@/features/cards/labels";
 import {
   ApiError,
   type Account,
   type Category,
+  type CreditCard,
   type Member,
   type QuickTemplate,
   type Transaction,
@@ -26,6 +28,7 @@ import {
   emptyEntry,
   fromTemplate,
   fromTransaction,
+  installmentPreview,
   isCompleteTemplate,
   toCreateRequest,
   type EntryValues,
@@ -57,8 +60,11 @@ const schema = z
       "CASH",
       "BANK_TRANSFER",
       "BOLETO",
+      "CREDIT_CARD",
       "OTHER",
     ]),
+    cardId: z.string(),
+    installments: z.number({ error: "Informe de 1 a 60 parcelas." }),
     mode: z.enum(["IMMEDIATE", "PLANNED"]),
     occurredOn: z.iso.date("Informe a data."),
     dueOn: z.string(),
@@ -68,6 +74,33 @@ const schema = z
     notes: z.string().trim().max(1000, "Máximo de 1000 caracteres."),
   })
   .superRefine((v, ctx) => {
+    if (v.method === "CREDIT_CARD") {
+      if (!v.cardId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["cardId"],
+          message: "Escolha o cartão.",
+        });
+      }
+      if (
+        !Number.isInteger(v.installments) ||
+        v.installments < 1 ||
+        v.installments > 60
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["installments"],
+          message: "Informe de 1 a 60 parcelas.",
+        });
+      } else if (v.amountCents >= 1 && v.amountCents < v.installments) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["installments"],
+          message: "Cada parcela precisa ter pelo menos R$ 0,01.",
+        });
+      }
+      return;
+    }
     if (v.mode === "IMMEDIATE" && !v.accountId) {
       ctx.addIssue({
         code: "custom",
@@ -97,6 +130,8 @@ const fields = [
   "categoryId",
   "accountId",
   "method",
+  "cardId",
+  "installments",
   "occurredOn",
   "dueOn",
   "scope",
@@ -111,6 +146,8 @@ const apiFieldNames: Record<string, string> = {
   "payment.method": "method",
   "payment.dueOn": "dueOn",
   "payment.mode": "mode",
+  "payment.cardId": "cardId",
+  "payment.installments": "installments",
 };
 
 function withFormFieldNames(err: unknown): unknown {
@@ -130,6 +167,8 @@ type Props = {
   householdId: string;
   /** Active accounts. */
   accounts: Account[];
+  /** Active credit cards (purchases, F4.7). */
+  cards: CreditCard[];
   /** All categories (archived ones are offered only when already in use). */
   categories: Category[];
   /** Active members (person of a personal entry). */
@@ -153,6 +192,7 @@ type Props = {
 export function EntryForm({
   householdId,
   accounts,
+  cards,
   categories,
   members,
   today,
@@ -177,6 +217,13 @@ export function EntryForm({
   const { errors, isSubmitting } = form.formState;
   const kind = useWatch({ control: form.control, name: "kind" });
   const mode = useWatch({ control: form.control, name: "mode" });
+  const method = useWatch({ control: form.control, name: "method" });
+  const amountCents = useWatch({ control: form.control, name: "amountCents" });
+  const installments = useWatch({
+    control: form.control,
+    name: "installments",
+  });
+  const onCard = method === "CREDIT_CARD";
   const scope = useWatch({ control: form.control, name: "scope" });
   const categoryId = useWatch({ control: form.control, name: "categoryId" });
   const options = categoryOptions(categories, kind, categoryId);
@@ -196,6 +243,8 @@ export function EntryForm({
     if (next === kind) return;
     form.setValue("kind", next);
     form.setValue("categoryId", "");
+    // Income never goes to a card.
+    if (next === "INCOME" && onCard) form.setValue("method", "PIX");
   };
 
   const onSubmit = form.handleSubmit(async (v) => {
@@ -215,13 +264,16 @@ export function EntryForm({
         toCreateRequest({ ...v, description }),
       );
       const what = kindLabel[v.kind];
+      const first = e.installments[0];
       const message = correcting
         ? `Lançamento corrigido: ${what.toLowerCase()} de ${formatBRL(v.amountCents)} em ${formatDate(v.occurredOn)}.`
-        : e.transaction
-          ? `${what} de ${formatBRL(e.transaction.amountCents)} lançada em ${formatDate(e.transaction.occurredOn)}.`
-          : e.obligation
-            ? `Previsão de ${formatBRL(e.obligation.amountCents)} lançada, vence em ${formatDate(e.obligation.dueOn)}.`
-            : "Lançamento registrado.";
+        : first
+          ? `Compra de ${formatBRL(v.amountCents)} no cartão${e.installments.length > 1 ? ` em ${e.installments.length}×` : ""}: ${e.installments.length > 1 ? "1ª parcela na fatura" : "fatura"} que vence em ${formatDate(first.dueOn)}.${e.allocationShifted ? " A fatura do período já estava fechada, então foi para a próxima." : ""}`
+          : e.transaction
+            ? `${what} de ${formatBRL(e.transaction.amountCents)} lançada em ${formatDate(e.transaction.occurredOn)}.`
+            : e.obligation
+              ? `Previsão de ${formatBRL(e.obligation.amountCents)} lançada, vence em ${formatDate(e.obligation.dueOn)}.`
+              : "Lançamento registrado.";
       setDone(message);
       onDone?.(message);
       if (!correcting) {
@@ -230,6 +282,7 @@ export function EntryForm({
             kind: v.kind,
             accountId: v.accountId,
             method: v.method,
+            cardId: v.cardId,
           }),
         );
       }
@@ -291,7 +344,7 @@ export function EntryForm({
                   ` · ${formatBRL(t.defaultAmountCents)}`}
               </Button>
             ))}
-            {last && !last.creditCardId && (
+            {last && (
               <Button
                 type="button"
                 variant="outline"
@@ -343,44 +396,48 @@ export function EntryForm({
         {...form.register("description")}
       />
 
-      <fieldset className="flex flex-col gap-1.5">
-        <legend className="mb-1.5 text-sm font-medium">Quando</legend>
-        <div className="flex flex-wrap gap-4 text-sm">
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              value="IMMEDIATE"
-              disabled={Boolean(correcting)}
-              {...form.register("mode")}
-            />
-            {income ? "Recebido agora" : "Pago agora"}
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              value="PLANNED"
-              disabled={Boolean(correcting)}
-              {...form.register("mode")}
-            />
-            Previsto (conta a {income ? "receber" : "pagar"})
-          </label>
-        </div>
-      </fieldset>
+      {!onCard && (
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="mb-1.5 text-sm font-medium">Quando</legend>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                value="IMMEDIATE"
+                disabled={Boolean(correcting)}
+                {...form.register("mode")}
+              />
+              {income ? "Recebido agora" : "Pago agora"}
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                value="PLANNED"
+                disabled={Boolean(correcting)}
+                {...form.register("mode")}
+              />
+              Previsto (conta a {income ? "receber" : "pagar"})
+            </label>
+          </div>
+        </fieldset>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField
           label={
-            mode === "PLANNED"
-              ? "Data da compra/competência"
-              : income
-                ? "Data do recebimento"
-                : "Data do pagamento"
+            onCard
+              ? "Data da compra"
+              : mode === "PLANNED"
+                ? "Data da compra/competência"
+                : income
+                  ? "Data do recebimento"
+                  : "Data do pagamento"
           }
           type="date"
           error={errors.occurredOn?.message}
           {...form.register("occurredOn")}
         />
-        {mode === "PLANNED" && (
+        {!onCard && mode === "PLANNED" && (
           <FormField
             label="Vencimento"
             type="date"
@@ -391,28 +448,71 @@ export function EntryForm({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <SelectField
-          label={mode === "PLANNED" ? "Conta (opcional)" : "Conta"}
-          error={errors.accountId?.message}
-          {...form.register("accountId")}
-        >
-          <option value="">
-            {mode === "PLANNED" ? "Escolher ao pagar" : "Escolha a conta"}
-          </option>
-          {accountOptions}
-        </SelectField>
+        {onCard ? (
+          <SelectField
+            label="Cartão"
+            error={errors.cardId?.message}
+            {...form.register("cardId")}
+          >
+            <option value="">Escolha o cartão</option>
+            {cards.map((c) => (
+              <option key={c.id} value={c.id}>
+                {cardName(c)}
+              </option>
+            ))}
+          </SelectField>
+        ) : (
+          <SelectField
+            label={mode === "PLANNED" ? "Conta (opcional)" : "Conta"}
+            error={errors.accountId?.message}
+            {...form.register("accountId")}
+          >
+            <option value="">
+              {mode === "PLANNED" ? "Escolher ao pagar" : "Escolha a conta"}
+            </option>
+            {accountOptions}
+          </SelectField>
+        )}
         <SelectField
           label="Meio"
           error={errors.method?.message}
-          {...form.register("method")}
+          {...form.register("method", {
+            onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+              // A card purchase is never a forecast (I-50).
+              if (e.target.value === "CREDIT_CARD") {
+                form.setValue("mode", "IMMEDIATE");
+                if (!form.getValues("cardId") && cards.length === 1) {
+                  form.setValue("cardId", cards[0].id);
+                }
+              }
+            },
+          })}
         >
           {paymentMethods.map((m) => (
             <option key={m} value={m}>
               {methodLabel[m]}
             </option>
           ))}
+          {(!income && cards.length > 0) || onCard ? (
+            <option value="CREDIT_CARD">Cartão de crédito</option>
+          ) : null}
         </SelectField>
       </div>
+
+      {onCard && (
+        <div className="flex flex-col gap-1.5">
+          <FormField
+            label="Parcelas"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={60}
+            error={errors.installments?.message}
+            {...form.register("installments", { valueAsNumber: true })}
+          />
+          <InstallmentHint amountCents={amountCents} n={installments} />
+        </div>
+      )}
 
       <details className="rounded-lg border px-3 py-2">
         <summary className="cursor-pointer text-sm font-medium">
@@ -439,7 +539,7 @@ export function EntryForm({
               </option>
             ))}
           </SelectField>
-          {mode === "IMMEDIATE" ? (
+          {onCard || mode === "IMMEDIATE" ? (
             <>
               <FormField
                 label="Estabelecimento (opcional)"
@@ -488,10 +588,31 @@ export function EntryForm({
           ? "Salvando…"
           : correcting
             ? "Salvar correção"
-            : mode === "PLANNED"
-              ? "Lançar previsão"
-              : "Lançar"}
+            : onCard
+              ? "Lançar compra"
+              : mode === "PLANNED"
+                ? "Lançar previsão"
+                : "Lançar"}
       </Button>
     </form>
+  );
+}
+
+/** "3× de R$ 33,34 (a última de R$ 33,33)": the split the API will make (RN-010). */
+function InstallmentHint({
+  amountCents,
+  n,
+}: {
+  amountCents: number;
+  n: number;
+}) {
+  const p = installmentPreview(amountCents, n);
+  if (!p) return null;
+  return (
+    <p className="text-sm text-muted-foreground">
+      {n === 1
+        ? "À vista: entra inteira na próxima fatura."
+        : `${n}× de ${formatBRL(p.first)}${p.first !== p.last ? ` (a última de ${formatBRL(p.last)})` : ""}, uma por fatura. O consumo é o valor total, na data da compra.`}
+    </p>
   );
 }

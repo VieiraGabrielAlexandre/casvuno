@@ -142,8 +142,8 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | F4.3 | Migration `card_invoices`/`card_installments` (+ ALTER em `transactions`); compra no crédito no `ledger` (find-or-create de faturas, lock, deslocamento se CLOSED) | F4.1, F4.2, F3.1 | T05; INV-02/03; compra retroativa com `allocationShifted` | `make test` | ✅ (entrega 15; I-50) |
 | F4.4 | Listar faturas por cartão/período; detalhe (parcelas, ajustes, pagamentos, saldo); fechar (manual, congela base) | F4.3 | INV-15; fechar antes de `closing_on` → 422 | `make test` | ✅ (entrega 16; I-51) |
 | F4.5 | Migration `invoice_payments`/`invoice_adjustments`; pagamento parcial/total; ajustes | F4.4, F2.1 | T07, T08, T17; INV-06/07 | `make test` | ✅ (entrega 17; I-52) |
-| F4.6 | Void de compra no cartão (política RN-019) + limite disponível estimado (RN-018) | F4.5, F3.3 | Void bloqueado com fatura CLOSED; limite = limite − saldo das faturas | `make test` | ✅ (entrega 18; I-53 aguardando aval) |
-| F4.7 | Web: cartões, faturas por mês (referência = vencimento), parcelas futuras, pagar fatura, fechar, ajustar, limite "estimado" | F4.6 | E2E: compra 6× → fatura → pagamento parcial → saldo correto | `make e2e` |
+| F4.6 | Void de compra no cartão (política RN-019) + limite disponível estimado (RN-018) | F4.5, F3.3 | Void bloqueado com fatura CLOSED; limite = limite − saldo das faturas | `make test` | ✅ (entrega 18; I-53) |
+| F4.7 | Web: cartões, faturas por mês (referência = vencimento), parcelas futuras, pagar fatura, fechar, ajustar, limite "estimado" | F4.6 | E2E: compra 6× → fatura → pagamento parcial → saldo correto | `make e2e` | ✅ (entrega 19; I-54 aguardando aval; o E2E fica na F8.5) |
 
 ### F5 — Recorrências e worker
 
@@ -228,8 +228,9 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | 000013 | triggers que congelam a fatura fechada (INV-15) | F4.4 ✅ |
 | 000014 | invoice_payments, invoice_adjustments (+ trigger de INV-06) | F4.5 ✅ |
 | 000015 | trigger de INV-06 também no cancelamento de parcelas | F4.6 ✅ |
-| 000016 | recurring_rules, recurring_occurrences, ALTER obligations/transactions | F5.3 |
-| 000017 | notification_preferences, notifications | F7.1 |
+| 000016 | favorito com cartão (`quick_templates.credit_card_id`) + `transactions.installment_count` | F4.7 ✅ |
+| 000017 | recurring_rules, recurring_occurrences, ALTER obligations/transactions | F5.3 |
+| 000018 | notification_preferences, notifications | F7.1 |
 
 A numeração é indicativa: se a ordem de entrega mudar, a sequência real segue a ordem de criação.
 

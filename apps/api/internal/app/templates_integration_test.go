@@ -26,6 +26,7 @@ type templateDTO struct {
 	PersonMemberID     *string `json:"personMemberId"`
 	PaymentMethod      string  `json:"paymentMethod"`
 	AccountID          *string `json:"accountId"`
+	CreditCardID       *string `json:"creditCardId"`
 	SortOrder          int     `json:"sortOrder"`
 }
 
@@ -326,4 +327,82 @@ func TestRepeatLastEntry(t *testing.T) {
 		t.Fatalf("by author = %+v", got)
 	}
 	owner.expect(http.StatusBadRequest, http.MethodGet, "/api/v1/households/"+h.ID+"/transactions?createdBy=you", nil)
+}
+
+// I-50 (F4.7): a favorite may be a card purchase (expense, card instead of account). The card
+// must be active and of the household; switching back to an account method clears it.
+func TestCardTemplates(t *testing.T) {
+	api := newTestAPI(t)
+	owner, _ := api.registerUser("owner")
+	h := owner.createHousehold("Casa")
+	cat := owner.firstCategory(h.ID, "EXPENSE")
+	income := owner.firstCategory(h.ID, "INCOME")
+	acc := owner.createAccount(h.ID, nil)
+	card := owner.createCard(h.ID, cardBody(h.MemberID, nil))
+	archived := owner.createCard(h.ID, cardBody(h.MemberID, map[string]any{"name": "Velho"}))
+	owner.expect(http.StatusOK, http.MethodPatch, "/api/v1/households/"+h.ID+"/cards/"+archived.ID, map[string]any{"isActive": false})
+	path := "/api/v1/households/" + h.ID + "/quick-templates"
+
+	body := templateBody(cat.ID, nil)
+	body["paymentMethod"], body["creditCardId"], body["label"] = "CREDIT_CARD", card.ID, "Mercado"
+	tpl := owner.createTemplate(h.ID, body)
+	if tpl.PaymentMethod != "CREDIT_CARD" || tpl.CreditCardID == nil || *tpl.CreditCardID != card.ID || tpl.AccountID != nil {
+		t.Fatalf("card template = %+v", tpl)
+	}
+	with := func(edit func(b map[string]any)) map[string]any {
+		b := templateBody(cat.ID, nil)
+		b["paymentMethod"], b["creditCardId"] = "CREDIT_CARD", card.ID
+		edit(b)
+		return b
+	}
+	for _, tc := range []struct {
+		name   string
+		body   map[string]any
+		status int
+		code   string
+		field  string
+	}{
+		{"no card", with(func(b map[string]any) { delete(b, "creditCardId") }), 400, "VALIDATION_ERROR", "creditCardId"},
+		{"card and account", with(func(b map[string]any) { b["accountId"] = acc.ID }), 400, "VALIDATION_ERROR", "accountId"},
+		{"income", with(func(b map[string]any) { b["kind"], b["categoryId"] = "INCOME", income.ID }), 400, "VALIDATION_ERROR", "paymentMethod"},
+		{"card with Pix", with(func(b map[string]any) { b["paymentMethod"] = "PIX" }), 400, "VALIDATION_ERROR", "creditCardId"},
+		{"unknown card", with(func(b map[string]any) { b["creditCardId"] = uuid.NewString() }), 422, "CARD_NOT_FOUND", "creditCardId"},
+		{"archived card", with(func(b map[string]any) { b["creditCardId"] = archived.ID }), 422, "CARD_ARCHIVED", "creditCardId"},
+	} {
+		r := owner.expect(tc.status, http.MethodPost, path, tc.body)
+		if code := r.errorCode(t); code != tc.code || !slices.Contains(r.errorFields(t), tc.field) {
+			t.Errorf("%s: %s", tc.name, r.body)
+		}
+	}
+	// Switching to Pix requires clearing the card.
+	owner.expect(http.StatusBadRequest, http.MethodPatch, path+"/"+tpl.ID, map[string]any{"paymentMethod": "PIX"})
+	var back templateDTO
+	owner.expect(http.StatusOK, http.MethodPatch, path+"/"+tpl.ID,
+		map[string]any{"paymentMethod": "PIX", "creditCardId": "", "accountId": acc.ID}).decode(t, &back)
+	if back.CreditCardID != nil || back.AccountID == nil || back.PaymentMethod != "PIX" {
+		t.Fatalf("back to Pix = %+v", back)
+	}
+}
+
+// F4.7: a card purchase keeps its number of installments on the transaction.
+func TestCardPurchaseInstallmentCount(t *testing.T) {
+	api := newTestAPI(t)
+	owner, _ := api.registerUser("owner")
+	h := owner.createHousehold("Casa")
+	cat := owner.firstCategory(h.ID, "EXPENSE")
+	acc := owner.createAccount(h.ID, nil)
+	card := owner.createCard(h.ID, cardBody(h.MemberID, nil))
+	p := owner.purchase(h.ID, purchaseBody(cat.ID, card.ID, 30000, 3, "2026-11-10"))
+	if p.Transaction.InstallmentCount == nil || *p.Transaction.InstallmentCount != 3 {
+		t.Fatalf("purchase = %+v", p.Transaction)
+	}
+	var page struct{ Items []transactionDTO }
+	owner.expect(http.StatusOK, http.MethodGet, "/api/v1/households/"+h.ID+"/transactions", nil).decode(t, &page)
+	if len(page.Items) != 1 || page.Items[0].InstallmentCount == nil || *page.Items[0].InstallmentCount != 3 {
+		t.Fatalf("list = %+v", page.Items)
+	}
+	if tx := owner.createTransaction(h.ID, expenseBody(cat.ID, acc.ID, 100)); tx.InstallmentCount != nil {
+		t.Fatalf("account entry has installments: %+v", tx)
+	}
+	assertInvariants(t)
 }

@@ -9,6 +9,7 @@ import {
 import { useState } from "react";
 
 import { accountsKey } from "@/features/accounts/hooks";
+import { cardsKey } from "@/features/cards/hooks";
 import {
   api,
   call,
@@ -25,7 +26,7 @@ import { IdempotencyKeys } from "@/lib/idempotency";
 
 const PAGE_SIZE = 25;
 
-/** Transactions and obligations: every ledger mutation invalidates both (and the balances). */
+/** Transactions and obligations: every ledger mutation invalidates both (and balances and cards). */
 const ledgerKey = (householdId: string) =>
   ["households", householdId, "ledger"] as const;
 const templatesKey = (householdId: string) =>
@@ -37,6 +38,8 @@ function useInvalidateLedger(householdId: string) {
     Promise.all([
       qc.invalidateQueries({ queryKey: ledgerKey(householdId) }),
       qc.invalidateQueries({ queryKey: accountsKey(householdId) }),
+      // Card purchases and their voids change invoices and the estimated limit.
+      qc.invalidateQueries({ queryKey: cardsKey(householdId) }),
     ]);
 }
 

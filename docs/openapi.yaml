@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.15.0
+  version: 0.16.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -1833,7 +1833,7 @@ components:
     Transaction:
       type: object
       additionalProperties: false
-      required: [id, kind, scope, personMemberId, createdByMemberId, description, merchant, notes, amountCents, categoryId, occurredOn, paymentMethod, accountId, creditCardId, status, createdAt, updatedAt]
+      required: [id, kind, scope, personMemberId, createdByMemberId, description, merchant, notes, amountCents, categoryId, occurredOn, paymentMethod, accountId, creditCardId, installmentCount, status, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         kind: { $ref: "#/components/schemas/TransactionKind" }
@@ -1849,6 +1849,7 @@ components:
         paymentMethod: { $ref: "#/components/schemas/PaymentMethod" }
         accountId: { type: [string, "null"], format: uuid, description: Nulo em compra no cartão }
         creditCardId: { type: [string, "null"], format: uuid, description: Preenchido só em compra no cartão }
+        installmentCount: { type: [integer, "null"], minimum: 1, maximum: 60, description: Número de parcelas da compra no cartão }
         status: { type: string, enum: [ACTIVE, VOIDED] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -1856,7 +1857,7 @@ components:
     QuickTemplate:
       type: object
       additionalProperties: false
-      required: [id, label, kind, description, defaultAmountCents, categoryId, scope, personMemberId, paymentMethod, accountId, sortOrder, createdAt, updatedAt]
+      required: [id, label, kind, description, defaultAmountCents, categoryId, scope, personMemberId, paymentMethod, accountId, creditCardId, sortOrder, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         label: { type: string }
@@ -1866,8 +1867,9 @@ components:
         categoryId: { type: string, format: uuid }
         scope: { $ref: "#/components/schemas/Scope" }
         personMemberId: { type: [string, "null"], format: uuid }
-        paymentMethod: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        paymentMethod: { $ref: "#/components/schemas/PaymentMethod" }
         accountId: { type: [string, "null"], format: uuid }
+        creditCardId: { type: [string, "null"], format: uuid, description: Preenchido só em favorito de compra no cartão (CREDIT_CARD) }
         sortOrder: { type: integer, minimum: 0, maximum: 10000 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -1894,8 +1896,9 @@ components:
         categoryId: { type: string, format: uuid }
         scope: { $ref: "#/components/schemas/Scope" }
         personMemberId: { type: string, format: uuid, description: Obrigatório se PERSONAL }
-        paymentMethod: { $ref: "#/components/schemas/AccountPaymentMethod" }
-        accountId: { type: string, format: uuid }
+        paymentMethod: { $ref: "#/components/schemas/PaymentMethod" }
+        accountId: { type: string, format: uuid, description: Não se usa com CREDIT_CARD }
+        creditCardId: { type: string, format: uuid, description: "Obrigatório com CREDIT_CARD (só despesa); cartão ativo da família" }
         sortOrder: { type: integer, minimum: 0, maximum: 10000, description: Padrão = depois do último }
 
     UpdateQuickTemplateRequest:
@@ -1908,8 +1911,9 @@ components:
         categoryId: { type: string, format: uuid }
         scope: { $ref: "#/components/schemas/Scope" }
         personMemberId: { type: string, description: 'UUID de membro ativo; "" limpa' }
-        paymentMethod: { $ref: "#/components/schemas/AccountPaymentMethod" }
+        paymentMethod: { $ref: "#/components/schemas/PaymentMethod" }
         accountId: { type: string, description: 'UUID de conta ativa; "" limpa' }
+        creditCardId: { type: string, description: 'UUID de cartão ativo; "" limpa (obrigatório ao trocar o meio de CREDIT_CARD)' }
         sortOrder: { type: integer, minimum: 0, maximum: 10000 }
 
     TransactionPage:

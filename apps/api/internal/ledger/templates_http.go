@@ -22,6 +22,7 @@ type templateResponse struct {
 	PersonMemberID     *string   `json:"personMemberId"`
 	PaymentMethod      string    `json:"paymentMethod"`
 	AccountID          *string   `json:"accountId"`
+	CreditCardID       *string   `json:"creditCardId"`
 	SortOrder          int32     `json:"sortOrder"`
 	CreatedAt          time.Time `json:"createdAt"`
 	UpdatedAt          time.Time `json:"updatedAt"`
@@ -32,7 +33,7 @@ func toTemplateResponse(t QuickTemplate) templateResponse {
 		ID: t.ID.String(), Label: t.Label, Kind: t.Kind, Description: t.Description,
 		DefaultAmountCents: t.DefaultAmountCents, CategoryID: t.CategoryID.String(), Scope: t.Scope,
 		PersonMemberID: uuidString(t.PersonMemberID), PaymentMethod: t.PaymentMethod, AccountID: uuidString(t.AccountID),
-		SortOrder: t.SortOrder, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		CreditCardID: uuidString(t.CreditCardID), SortOrder: t.SortOrder, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 }
 
@@ -62,6 +63,7 @@ type createTemplateRequest struct {
 	PersonMemberID     string `json:"personMemberId,omitempty" validate:"omitempty,uuid"`
 	PaymentMethod      string `json:"paymentMethod" validate:"required"`
 	AccountID          string `json:"accountId,omitempty" validate:"omitempty,uuid"`
+	CreditCardID       string `json:"creditCardId,omitempty" validate:"omitempty,uuid"`
 	SortOrder          *int32 `json:"sortOrder,omitempty"`
 }
 
@@ -76,7 +78,7 @@ func (h *Handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 		Label: req.Label, Kind: req.Kind, Description: req.Description, DefaultAmountCents: req.DefaultAmountCents,
 		CategoryID: uuid.MustParse(req.CategoryID), // validated by tags
 		Scope:      req.Scope, PersonMemberID: optionalUUID(req.PersonMemberID), PaymentMethod: req.PaymentMethod,
-		AccountID: optionalUUID(req.AccountID), SortOrder: req.SortOrder,
+		AccountID: optionalUUID(req.AccountID), CreditCardID: optionalUUID(req.CreditCardID), SortOrder: req.SortOrder,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, h.log, err)
@@ -85,7 +87,7 @@ func (h *Handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, toTemplateResponse(t))
 }
 
-// updateTemplateRequest: absent fields stay; "" clears personMemberId/accountId and
+// updateTemplateRequest: absent fields stay; "" clears personMemberId/accountId/creditCardId and
 // defaultAmountCents 0 clears the amount.
 type updateTemplateRequest struct {
 	Label              *string `json:"label,omitempty"`
@@ -96,6 +98,7 @@ type updateTemplateRequest struct {
 	PersonMemberID     *string `json:"personMemberId,omitempty"`
 	PaymentMethod      *string `json:"paymentMethod,omitempty"`
 	AccountID          *string `json:"accountId,omitempty"`
+	CreditCardID       *string `json:"creditCardId,omitempty"`
 	SortOrder          *int32  `json:"sortOrder,omitempty"`
 }
 
@@ -111,7 +114,8 @@ func (h *Handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	in := TemplateUpdate{
 		Label: req.Label, Description: req.Description, DefaultAmountCents: req.DefaultAmountCents, Scope: req.Scope,
-		PersonMemberID: req.PersonMemberID, PaymentMethod: req.PaymentMethod, AccountID: req.AccountID, SortOrder: req.SortOrder,
+		PersonMemberID: req.PersonMemberID, PaymentMethod: req.PaymentMethod, AccountID: req.AccountID,
+		CreditCardID: req.CreditCardID, SortOrder: req.SortOrder,
 	}
 	if req.CategoryID != nil {
 		cid := uuid.MustParse(*req.CategoryID) // validated by tags

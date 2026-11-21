@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   Account,
   Category,
+  CreditCard,
   Member,
   QuickTemplate,
   Transaction,
@@ -85,6 +86,7 @@ const cafe: QuickTemplate = {
   personMemberId: null,
   paymentMethod: "PIX",
   accountId: account.id,
+  creditCardId: null,
   sortOrder: 0,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
@@ -105,11 +107,27 @@ const tx = (overrides: Partial<Transaction> = {}): Transaction => ({
   paymentMethod: "PIX",
   accountId: account.id,
   creditCardId: null,
+  installmentCount: null,
   status: "ACTIVE",
   createdAt: "2026-11-11T12:00:00Z",
   updatedAt: "2026-11-11T12:00:00Z",
   ...overrides,
 });
+
+const card: CreditCard = {
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  name: "Nubank",
+  holderMemberId: member.id,
+  lastFour: "1234",
+  limitCents: 500000,
+  closingDay: 3,
+  dueDay: 10,
+  isActive: true,
+  createdAt: "2026-01-01T00:00:00Z",
+  updatedAt: "2026-01-01T00:00:00Z",
+  outstandingCents: 0,
+  estimatedAvailableLimitCents: 500000,
+};
 
 const obligation = {
   id: "99999999-9999-4999-8999-999999999999",
@@ -135,6 +153,9 @@ const obligation = {
   updatedAt: "2026-11-11T12:00:00Z",
 };
 
+/** EntryCreated for an account entry: no installments (F4.3). */
+const entry = { obligation, installments: [], allocationShifted: false };
+
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,
@@ -150,6 +171,7 @@ function renderForm(props: Partial<Parameters<typeof EntryForm>[0]> = {}) {
       <EntryForm
         householdId="hh"
         accounts={[account]}
+        cards={[card]}
         categories={[food, bakery, salary]}
         members={[member]}
         today="2026-11-11"
@@ -171,7 +193,7 @@ describe("EntryForm", () => {
   it("a complete favorite needs only the confirmation (≤ 3 interactions)", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(json(201, { transaction: tx(), obligation }));
+      .mockResolvedValue(json(201, { ...entry, transaction: tx() }));
     vi.stubGlobal("fetch", fetchMock);
     renderForm();
 
@@ -215,7 +237,7 @@ describe("EntryForm", () => {
   it("records a forecast with its due date; description defaults to the category", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(json(201, { transaction: null, obligation }));
+      .mockResolvedValue(json(201, { ...entry, transaction: null }));
     vi.stubGlobal("fetch", fetchMock);
     renderForm({ templates: [] });
 
@@ -261,7 +283,7 @@ describe("EntryForm", () => {
   it("repeats the last entry with today's date", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(json(201, { transaction: tx(), obligation }));
+      .mockResolvedValue(json(201, { ...entry, transaction: tx() }));
     vi.stubGlobal("fetch", fetchMock);
     renderForm({ last: tx({ occurredOn: "2026-11-01", amountCents: 3000 }) });
 
@@ -303,7 +325,7 @@ describe("EntryForm", () => {
       .fn()
       .mockResolvedValueOnce(json(200, tx({ status: "VOIDED" })))
       .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-      .mockResolvedValueOnce(json(201, { transaction: tx(), obligation }));
+      .mockResolvedValueOnce(json(201, { ...entry, transaction: tx() }));
     vi.stubGlobal("fetch", fetchMock);
     renderForm({ correcting: tx({ amountCents: 1500 }) });
 
@@ -334,6 +356,72 @@ describe("EntryForm", () => {
         .getByRole("button", { name: "Salvar correção" })
         .hasAttribute("disabled"),
     ).toBe(true);
+  });
+
+  it("records a card purchase in installments (F4.7)", async () => {
+    const purchase = tx({
+      amountCents: 120000,
+      paymentMethod: "CREDIT_CARD",
+      accountId: null,
+      creditCardId: card.id,
+      installmentCount: 6,
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      json(201, {
+        transaction: purchase,
+        obligation: null,
+        installments: [1, 2, 3, 4, 5, 6].map((n) => ({
+          number: n,
+          amountCents: 20000,
+          invoiceId: `inv${n}`,
+          closingOn: "2026-12-03",
+          dueOn: `2027-0${n}-10`,
+        })),
+        allocationShifted: false,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderForm({ templates: [] });
+
+    fireEvent.change(screen.getByLabelText("Valor"), {
+      target: { value: "1200,00" },
+    });
+    fireEvent.change(screen.getByLabelText("Categoria"), {
+      target: { value: food.id },
+    });
+    fireEvent.change(screen.getByLabelText("Meio"), {
+      target: { value: "CREDIT_CARD" },
+    });
+    // A card purchase is never a forecast; the only card is chosen.
+    expect(screen.queryByLabelText(/Previsto/)).toBeNull();
+    fireEvent.change(screen.getByLabelText("Parcelas"), {
+      target: { value: "6" },
+    });
+    expect(screen.getByText(/6× de R\$\s?200,00/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Lançar compra" }));
+
+    expect((await screen.findByRole("status")).textContent).toMatch(
+      /Compra de R\$\s?1\.200,00 no cartão em 6×: 1ª parcela na fatura que vence em 10\/01\/2027\./,
+    );
+    const body = await (fetchMock.mock.calls[0][0] as Request).json();
+    expect(body).toEqual({
+      kind: "EXPENSE",
+      scope: "FAMILY",
+      description: "Alimentação",
+      amountCents: 120000,
+      categoryId: food.id,
+      occurredOn: "2026-11-11",
+      payment: { method: "CREDIT_CARD", cardId: card.id, installments: 6 },
+    });
+  });
+
+  it("does not offer the card for income", () => {
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Receita" }));
+    const methods = Array.from(
+      screen.getByLabelText<HTMLSelectElement>("Meio").options,
+    ).map((o) => o.value);
+    expect(methods).not.toContain("CREDIT_CARD");
   });
 
   it("blocks submission while offline", () => {
