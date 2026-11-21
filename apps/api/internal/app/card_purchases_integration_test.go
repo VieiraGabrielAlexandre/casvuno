@@ -54,8 +54,8 @@ type invoiceRow struct {
 	ID, Start, Closing, Due, Status string
 }
 
-// invoices returns a card's invoices in cycle order (read from the database until the
-// invoice routes exist, F4.4).
+// invoices returns a card's invoices in cycle order, read from the database (the API lists
+// them by due date, which tests check separately).
 func (api *testAPI) invoices(cardID string) []invoiceRow {
 	api.t.Helper()
 	rows, err := api.pool.Query(context.Background(), `
@@ -335,13 +335,8 @@ func TestRetroactivePurchaseSkipsAClosedInvoice(t *testing.T) {
 	owner.purchase(h.ID, purchaseBody(cat.ID, card.ID, 30000, 3, "2026-11-10"))
 	invoices := api.invoices(card.ID)
 
-	// Closing arrives with F4.4: freeze the first invoice directly, as the close route will.
-	if _, err := api.pool.Exec(context.Background(), `
-		UPDATE card_invoices SET status = 'CLOSED', closed_base_amount_cents = 10000, closed_at = now(),
-		       closed_by_member_id = $2, updated_at = now()
-		WHERE id = $1`, invoices[0].ID, h.MemberID); err != nil {
-		t.Fatal(err)
-	}
+	api.setToday("2026-12-03")
+	owner.closeInvoice(h.ID, invoices[0].ID)
 	p := owner.purchase(h.ID, purchaseBody(cat.ID, card.ID, 4000, 2, "2026-11-20"))
 	if !p.AllocationShifted {
 		t.Fatal("allocationShifted = false")

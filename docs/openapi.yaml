@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Casvuno API
-  version: 0.12.0
+  version: 0.13.0
   description: |
     API do Casvuno. JSON em camelCase; datas-hora em RFC 3339.
     Autenticação por cookie de sessão HttpOnly (`casvuno_session`; `__Host-casvuno_session` sob HTTPS).
@@ -19,6 +19,7 @@ tags:
   - name: accounts
   - name: transfers
   - name: cards
+  - name: invoices
   - name: transactions
   - name: obligations
   - name: quick-templates
@@ -626,6 +627,87 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
 
+  /api/v1/households/{householdId}/cards/{cardId}/invoices:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/CardId"
+    get:
+      tags: [invoices]
+      operationId: listCardInvoices
+      summary: Faturas de um cartão por vencimento (mais antigas primeiro; paginação por cursor)
+      description: |
+        Mês de referência = mês do vencimento (ADR 0003). As faturas são criadas pelas compras, inclusive futuras
+        (parcelas) e ciclos vazios entre elas (total zero). Cartão arquivado continua listando suas faturas.
+        Saldo de fatura é **compromisso**, não consumo.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: from
+          in: query
+          description: Vencimento a partir de
+          schema: { $ref: "#/components/schemas/Date" }
+        - name: to
+          in: query
+          description: Vencimento até
+          schema: { $ref: "#/components/schemas/Date" }
+      responses:
+        "200":
+          description: Página de faturas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvoicePage" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/invoices/{invoiceId}:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/InvoiceId"
+    get:
+      tags: [invoices]
+      operationId: getInvoice
+      summary: Fatura com suas parcelas e saldo
+      description: Parcelas `ACTIVE` e `CANCELLED`, por data da compra. Só as `ACTIVE` entram no total.
+      responses:
+        "200":
+          description: Fatura
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvoiceDetail" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/households/{householdId}/invoices/{invoiceId}/close:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdId"
+      - $ref: "#/components/parameters/InvoiceId"
+    post:
+      tags: [invoices]
+      operationId: closeInvoice
+      summary: Fechar a fatura (congela o valor base)
+      description: |
+        Fechamento manual (I-15): permitido a partir de `closingOn` (hoje no fuso da família); antes disso → 422
+        `INVOICE_NOT_CLOSABLE_YET`. Congela `closedBaseAmountCents` = soma das parcelas `ACTIVE` (INV-15); depois disso
+        nenhuma parcela entra nem sai (compra retroativa vai para a próxima fatura aberta, `allocationShifted`).
+        Fechar uma fatura já fechada não muda nada. Cartão arquivado também pode ter faturas fechadas.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Fatura fechada (ou repetida com a mesma Idempotency-Key)
+          headers:
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvoiceDetail" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
   /api/v1/households/{householdId}/transactions:
     parameters:
       - $ref: "#/components/parameters/HouseholdId"
@@ -1057,6 +1139,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
 
+    InvoiceId:
+      name: invoiceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
     AccountId:
       name: accountId
       in: path
@@ -1456,6 +1544,77 @@ components:
         closingDay: { type: integer, minimum: 1, maximum: 31 }
         dueDay: { type: integer, minimum: 1, maximum: 31 }
         isActive: { type: boolean, description: "false arquiva; true restaura" }
+
+    InvoiceStatus:
+      type: string
+      enum: [OPEN, CLOSED]
+
+    Invoice:
+      type: object
+      additionalProperties: false
+      description: |
+        Total = parcelas `ACTIVE` (os ajustes entram na F4.5); `paidCents` = pagamentos da fatura (F4.5). Saldo em aberto
+        é **compromisso**; as parcelas nunca são somadas de novo fora da fatura.
+      required: [id, creditCardId, cycleStartOn, closingOn, dueOn, referenceMonth, status, paymentStatus, closingPending, installmentsCount, installmentsCents, totalCents, paidCents, outstandingCents, closedBaseAmountCents, closedAt, closedByMemberId, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        creditCardId: { type: string, format: uuid }
+        cycleStartOn: { $ref: "#/components/schemas/Date" }
+        closingOn: { $ref: "#/components/schemas/Date", description: Compras até a véspera entram nesta fatura }
+        dueOn: { $ref: "#/components/schemas/Date" }
+        referenceMonth: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$", description: Mês do vencimento (AAAA-MM) }
+        status: { $ref: "#/components/schemas/InvoiceStatus" }
+        paymentStatus: { type: string, enum: [UNPAID, PARTIALLY_PAID, PAID], description: Derivado do saldo; fatura sem valor é PAID }
+        closingPending: { type: boolean, description: Aberta e com o fechamento já alcançado (hoje no fuso da família) }
+        installmentsCount: { type: integer, minimum: 0, description: Parcelas ACTIVE }
+        installmentsCents: { type: integer, minimum: 0 }
+        totalCents: { type: integer, minimum: 0 }
+        paidCents: { type: integer, minimum: 0 }
+        outstandingCents: { type: integer, minimum: 0 }
+        closedBaseAmountCents: { type: [integer, "null"], minimum: 0, description: Congelado no fechamento }
+        closedAt: { type: [string, "null"], format: date-time }
+        closedByMemberId: { type: [string, "null"], format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    InvoicePage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Invoice" }
+        nextCursor: { type: [string, "null"] }
+
+    InvoiceInstallment:
+      type: object
+      additionalProperties: false
+      required: [id, transactionId, number, total, amountCents, status, occurredOn, description, merchant, categoryId, scope, personMemberId, purchaseAmountCents]
+      properties:
+        id: { type: string, format: uuid }
+        transactionId: { type: string, format: uuid, description: A compra (consumo) }
+        number: { type: integer, minimum: 1, maximum: 60 }
+        total: { type: integer, minimum: 1, maximum: 60 }
+        amountCents: { type: integer, minimum: 1 }
+        status: { type: string, enum: [ACTIVE, CANCELLED] }
+        occurredOn: { $ref: "#/components/schemas/Date" }
+        description: { type: string }
+        merchant: { type: [string, "null"] }
+        categoryId: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/Scope" }
+        personMemberId: { type: [string, "null"], format: uuid }
+        purchaseAmountCents: { type: integer, minimum: 1, description: Valor total da compra }
+
+    InvoiceDetail:
+      type: object
+      additionalProperties: false
+      required: [invoice, installments]
+      properties:
+        invoice: { $ref: "#/components/schemas/Invoice" }
+        installments:
+          type: array
+          items: { $ref: "#/components/schemas/InvoiceInstallment" }
 
     Movement:
       type: object
