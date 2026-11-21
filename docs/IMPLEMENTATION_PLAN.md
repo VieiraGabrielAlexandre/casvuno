@@ -141,7 +141,7 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | F4.2 | Migration `credit_cards` + CRUD (sem PAN/CVV, `last_four` opcional); arquivar sem saldo em aberto | F1.5 | Validação 1..31; outra família → 404 | `make test` | ✅ (entrega 14; I-49; "arquivar sem saldo em aberto" implementado na F4.5) |
 | F4.3 | Migration `card_invoices`/`card_installments` (+ ALTER em `transactions`); compra no crédito no `ledger` (find-or-create de faturas, lock, deslocamento se CLOSED) | F4.1, F4.2, F3.1 | T05; INV-02/03; compra retroativa com `allocationShifted` | `make test` | ✅ (entrega 15; I-50) |
 | F4.4 | Listar faturas por cartão/período; detalhe (parcelas, ajustes, pagamentos, saldo); fechar (manual, congela base) | F4.3 | INV-15; fechar antes de `closing_on` → 422 | `make test` | ✅ (entrega 16; I-51) |
-| F4.5 | Migration `invoice_payments`/`invoice_adjustments`; pagamento parcial/total; ajustes | F4.4, F2.1 | T07, T08, T17; INV-06/07 | `make test` | ✅ (entrega 17; I-52 aguardando aval) |
+| F4.5 | Migration `invoice_payments`/`invoice_adjustments`; pagamento parcial/total; ajustes | F4.4, F2.1 | T07, T08, T17; INV-06/07 | `make test` | ✅ (entrega 17; I-52) |
 | F4.6 | Void de compra no cartão (política RN-019) + limite disponível estimado (RN-018) | F4.5, F3.3 | Void bloqueado com fatura CLOSED; limite = limite − saldo das faturas | `make test` |
 | F4.7 | Web: cartões, faturas por mês (referência = vencimento), parcelas futuras, pagar fatura, fechar, ajustar, limite "estimado" | F4.6 | E2E: compra 6× → fatura → pagamento parcial → saldo correto | `make e2e` |
 
