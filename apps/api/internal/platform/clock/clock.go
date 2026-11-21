@@ -39,3 +39,10 @@ func (f *Fake) Advance(d time.Duration) {
 	defer f.mu.Unlock()
 	f.now = f.now.Add(d)
 }
+
+// Set moves the fake clock to t (forwards or backwards).
+func (f *Fake) Set(t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.now = t.UTC()
+}

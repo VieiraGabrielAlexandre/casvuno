@@ -139,8 +139,8 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 |---|---|---|---|---|---|
 | F4.1 | `cards/domain`: `Split` (RN-010, fuzz) e `cardcycle` (ADR 0003) puros | F0.2 | T06, T13, T14 e toda a tabela do ADR 0003 | `go test ./internal/cards/domain/...` | ✅ (entrega 13; I-48) |
 | F4.2 | Migration `credit_cards` + CRUD (sem PAN/CVV, `last_four` opcional); arquivar sem saldo em aberto | F1.5 | Validação 1..31; outra família → 404 | `make test` | ✅ (entrega 14; I-49; a regra "arquivar sem saldo em aberto" entra com as faturas na F4.5) |
-| F4.3 | Migration `card_invoices`/`card_installments` (+ ALTER em `transactions`); compra no crédito no `ledger` (find-or-create de faturas, lock, deslocamento se CLOSED) | F4.1, F4.2, F3.1 | T05; INV-02/03; compra retroativa com `allocationShifted` | `make test` | ✅ (entrega 15; I-50 aguardando aval) |
-| F4.4 | Listar faturas por cartão/período; detalhe (parcelas, ajustes, pagamentos, saldo); fechar (manual, congela base) | F4.3 | INV-15; fechar antes de `closing_on` → 422 | `make test` |
+| F4.3 | Migration `card_invoices`/`card_installments` (+ ALTER em `transactions`); compra no crédito no `ledger` (find-or-create de faturas, lock, deslocamento se CLOSED) | F4.1, F4.2, F3.1 | T05; INV-02/03; compra retroativa com `allocationShifted` | `make test` | ✅ (entrega 15; I-50) |
+| F4.4 | Listar faturas por cartão/período; detalhe (parcelas, ajustes, pagamentos, saldo); fechar (manual, congela base) | F4.3 | INV-15; fechar antes de `closing_on` → 422 | `make test` | ✅ (entrega 16; I-51) |
 | F4.5 | Migration `invoice_payments`/`invoice_adjustments`; pagamento parcial/total; ajustes | F4.4, F2.1 | T07, T08, T17; INV-06/07 | `make test` |
 | F4.6 | Void de compra no cartão (política RN-019) + limite disponível estimado (RN-018) | F4.5, F3.3 | Void bloqueado com fatura CLOSED; limite = limite − saldo das faturas | `make test` |
 | F4.7 | Web: cartões, faturas por mês (referência = vencimento), parcelas futuras, pagar fatura, fechar, ajustar, limite "estimado" | F4.6 | E2E: compra 6× → fatura → pagamento parcial → saldo correto | `make e2e` |
@@ -223,11 +223,12 @@ Legenda: **Dep.** = dependências; **Aceite** = critérios verificáveis; **Veri
 | 000008 | transfers + ALTER account_movements (transfer_id) | F2.3 ✅ |
 | 000009 | transactions, obligations, obligation_payments (+ `UNIQUE(household_id, id, kind)` em categories) | F3.1 ✅ |
 | 000010 | quick_templates (+ índice de `transactions` por autor) | F3.4 ✅ |
-| 000011 | credit_cards | F4.2 |
-| 000012 | card_invoices, card_installments, ALTER transactions (credit_card_id) | F4.3 |
-| 000013 | invoice_payments, invoice_adjustments | F4.5 |
-| 000014 | recurring_rules, recurring_occurrences, ALTER obligations/transactions | F5.3 |
-| 000015 | notification_preferences, notifications | F7.1 |
+| 000011 | credit_cards | F4.2 ✅ |
+| 000012 | card_invoices, card_installments, ALTER transactions (credit_card_id) | F4.3 ✅ |
+| 000013 | triggers que congelam a fatura fechada (INV-15) | F4.4 ✅ |
+| 000014 | invoice_payments, invoice_adjustments | F4.5 |
+| 000015 | recurring_rules, recurring_occurrences, ALTER obligations/transactions | F5.3 |
+| 000016 | notification_preferences, notifications | F7.1 |
 
 A numeração é indicativa: se a ordem de entrega mudar, a sequência real segue a ordem de criação.
 

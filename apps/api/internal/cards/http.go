@@ -10,17 +10,19 @@ import (
 
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/authctx"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/httpx"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/idempotency"
 )
 
-// Handler exposes card routes; any active member may operate them.
+// Handler exposes card and invoice routes; any active member may operate them (RN-002).
 type Handler struct {
-	svc *Service
-	log *slog.Logger
+	svc  *Service
+	idem *idempotency.Middleware
+	log  *slog.Logger
 }
 
 // NewHandler builds the cards HTTP handler.
-func NewHandler(svc *Service, log *slog.Logger) *Handler {
-	return &Handler{svc: svc, log: log}
+func NewHandler(svc *Service, idem *idempotency.Middleware, log *slog.Logger) *Handler {
+	return &Handler{svc: svc, idem: idem, log: log}
 }
 
 // Routes registers routes relative to /households/{householdId} (behind RequireMember).
@@ -29,6 +31,10 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post("/cards", h.create)
 	r.Get("/cards/{cardId}", h.get)
 	r.Patch("/cards/{cardId}", h.update)
+	r.Get("/cards/{cardId}/invoices", h.listInvoices)
+
+	r.Get("/invoices/{invoiceId}", h.getInvoice)
+	r.With(h.idem.Require).Post("/invoices/{invoiceId}/close", h.closeInvoice) // ADR 0007
 }
 
 type cardResponse struct {

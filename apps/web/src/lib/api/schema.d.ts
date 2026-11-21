@@ -415,6 +415,80 @@ export interface paths {
         patch: operations["updateCard"];
         trace?: never;
     };
+    "/api/v1/households/{householdId}/cards/{cardId}/invoices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                cardId: components["parameters"]["CardId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Faturas de um cartão por vencimento (mais antigas primeiro; paginação por cursor)
+         * @description Mês de referência = mês do vencimento (ADR 0003). As faturas são criadas pelas compras, inclusive futuras
+         *     (parcelas) e ciclos vazios entre elas (total zero). Cartão arquivado continua listando suas faturas.
+         *     Saldo de fatura é **compromisso**, não consumo.
+         */
+        get: operations["listCardInvoices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/invoices/{invoiceId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Fatura com suas parcelas e saldo
+         * @description Parcelas `ACTIVE` e `CANCELLED`, por data da compra. Só as `ACTIVE` entram no total.
+         */
+        get: operations["getInvoice"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/households/{householdId}/invoices/{invoiceId}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fechar a fatura (congela o valor base)
+         * @description Fechamento manual (I-15): permitido a partir de `closingOn` (hoje no fuso da família); antes disso → 422
+         *     `INVOICE_NOT_CLOSABLE_YET`. Congela `closedBaseAmountCents` = soma das parcelas `ACTIVE` (INV-15); depois disso
+         *     nenhuma parcela entra nem sai (compra retroativa vai para a próxima fatura aberta, `allocationShifted`).
+         *     Fechar uma fatura já fechada não muda nada. Cartão arquivado também pode ter faturas fechadas.
+         */
+        post: operations["closeInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/households/{householdId}/transactions": {
         parameters: {
             query?: never;
@@ -921,6 +995,80 @@ export interface components {
             /** @description false arquiva; true restaura */
             isActive?: boolean;
         };
+        /** @enum {string} */
+        InvoiceStatus: "OPEN" | "CLOSED";
+        /**
+         * @description Total = parcelas `ACTIVE` (os ajustes entram na F4.5); `paidCents` = pagamentos da fatura (F4.5). Saldo em aberto
+         *     é **compromisso**; as parcelas nunca são somadas de novo fora da fatura.
+         */
+        Invoice: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            creditCardId: string;
+            cycleStartOn: components["schemas"]["Date"];
+            /** @description Compras até a véspera entram nesta fatura */
+            closingOn: components["schemas"]["Date"];
+            dueOn: components["schemas"]["Date"];
+            /** @description Mês do vencimento (AAAA-MM) */
+            referenceMonth: string;
+            status: components["schemas"]["InvoiceStatus"];
+            /**
+             * @description Derivado do saldo; fatura sem valor é PAID
+             * @enum {string}
+             */
+            paymentStatus: "UNPAID" | "PARTIALLY_PAID" | "PAID";
+            /** @description Aberta e com o fechamento já alcançado (hoje no fuso da família) */
+            closingPending: boolean;
+            /** @description Parcelas ACTIVE */
+            installmentsCount: number;
+            installmentsCents: number;
+            totalCents: number;
+            paidCents: number;
+            outstandingCents: number;
+            /** @description Congelado no fechamento */
+            closedBaseAmountCents: number | null;
+            /** Format: date-time */
+            closedAt: string | null;
+            /** Format: uuid */
+            closedByMemberId: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        InvoicePage: {
+            items: components["schemas"]["Invoice"][];
+            nextCursor: string | null;
+        };
+        InvoiceInstallment: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description A compra (consumo)
+             */
+            transactionId: string;
+            number: number;
+            total: number;
+            amountCents: number;
+            /** @enum {string} */
+            status: "ACTIVE" | "CANCELLED";
+            occurredOn: components["schemas"]["Date"];
+            description: string;
+            merchant: string | null;
+            /** Format: uuid */
+            categoryId: string;
+            scope: components["schemas"]["Scope"];
+            /** Format: uuid */
+            personMemberId: string | null;
+            /** @description Valor total da compra */
+            purchaseAmountCents: number;
+        };
+        InvoiceDetail: {
+            invoice: components["schemas"]["Invoice"];
+            installments: components["schemas"]["InvoiceInstallment"][];
+        };
         Movement: {
             /** Format: uuid */
             id: string;
@@ -1269,6 +1417,7 @@ export interface components {
         TemplateId: string;
         TransactionId: string;
         CardId: string;
+        InvoiceId: string;
         AccountId: string;
         /** @description Itens por página (padrão 25). */
         Limit: number;
@@ -2119,6 +2268,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Card"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listCardInvoices: {
+        parameters: {
+            query?: {
+                /** @description Itens por página (padrão 25). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Valor opaco de `nextCursor` da página anterior. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Vencimento a partir de */
+                from?: components["schemas"]["Date"];
+                /** @description Vencimento até */
+                to?: components["schemas"]["Date"];
+            };
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                cardId: components["parameters"]["CardId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Página de faturas */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoicePage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    getInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fatura */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoiceDetail"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    closeInvoice: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Obrigatório nas mutações financeiras críticas (ADR 0007). Gere um valor novo (ex.: UUID) por submissão e reutilize-o nas retentativas.
+                 *     Mesma chave e mesma requisição → a resposta original é repetida, com `Idempotent-Replayed: true`.
+                 *     Mesma chave com outra requisição → 409 `IDEMPOTENCY_KEY_REUSED`. Sem chave → 400 `IDEMPOTENCY_KEY_REQUIRED`.
+                 *     Só respostas de sucesso são memorizadas (7 dias); falhas podem ser repetidas com a mesma chave.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                householdId: components["parameters"]["HouseholdId"];
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fatura fechada (ou repetida com a mesma Idempotency-Key) */
+            200: {
+                headers: {
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoiceDetail"];
                 };
             };
             400: components["responses"]["Error"];

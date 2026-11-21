@@ -21,6 +21,7 @@ import (
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/kernel"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/audit"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/authctx"
+	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/clock"
 	"github.com/VieiraGabrielAlexandre/casvuno/apps/api/internal/platform/postgres"
 )
 
@@ -77,13 +78,14 @@ type UpdateInput struct {
 // Service implements card use cases.
 type Service struct {
 	tx      *postgres.TxManager
+	clock   clock.Clock
 	audit   *audit.Recorder
 	members MemberChecker
 }
 
 // NewService builds the cards service.
-func NewService(tx *postgres.TxManager, rec *audit.Recorder, members MemberChecker) *Service {
-	return &Service{tx: tx, audit: rec, members: members}
+func NewService(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, members MemberChecker) *Service {
+	return &Service{tx: tx, clock: clk, audit: rec, members: members}
 }
 
 var errNotFound = kernel.NewError(kernel.ErrNotFound, "CARD_NOT_FOUND", "Cartão não encontrado.")

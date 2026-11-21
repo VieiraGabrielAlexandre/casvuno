@@ -86,6 +86,18 @@ WHERE a.cycle_start_on < b.closing_on AND b.cycle_start_on < a.closing_on
 
 UNION ALL
 
+-- INV-15: a CLOSED invoice keeps the base frozen at closing, which is the sum of its ACTIVE
+-- installments: no installment entered or left it afterwards (later corrections are
+-- adjustments, F4.5).
+SELECT 'INV-15', v.id::text, 'closed invoice base differs from its active installments'
+FROM card_invoices v
+WHERE v.status = 'CLOSED'
+  AND v.closed_base_amount_cents <> (SELECT COALESCE(sum(i.amount_cents), 0) FROM card_installments i
+                                     WHERE i.household_id = v.household_id AND i.card_invoice_id = v.id
+                                       AND i.status = 'ACTIVE')
+
+UNION ALL
+
 -- INV-04: payments never exceed the obligation.
 SELECT 'INV-04', o.id::text, 'payments exceed the obligation amount'
 FROM obligations o
