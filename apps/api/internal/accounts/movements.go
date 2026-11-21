@@ -19,8 +19,9 @@ import (
 // Movement kinds other modules may post. TRANSFER and REVERSAL are written only by this
 // module, through transfers and reversals.
 const (
-	KindDirectPayment = "DIRECT_PAYMENT"
-	KindDirectReceipt = "DIRECT_RECEIPT"
+	KindDirectPayment  = "DIRECT_PAYMENT"
+	KindDirectReceipt  = "DIRECT_RECEIPT"
+	KindInvoicePayment = "INVOICE_PAYMENT" // paying a card invoice (cards module, F4.5)
 
 	kindReversal = "REVERSAL"
 )
@@ -43,11 +44,13 @@ type PostInput struct {
 	Field       string
 }
 
-var postableKinds = map[string]string{KindDirectPayment: DirectionOut, KindDirectReceipt: DirectionIn}
+var postableKinds = map[string]string{
+	KindDirectPayment: DirectionOut, KindDirectReceipt: DirectionIn, KindInvoicePayment: DirectionOut,
+}
 
 // PostMovement records one cash movement on an active account of the household and returns
 // its ID. It must run inside the caller's transaction (TxManager.WithinTx), so the movement
-// and the record that justifies it (an obligation payment) commit together. The account is
+// and the record that justifies it (an obligation or invoice payment) commit together. The account is
 // locked, so it cannot be archived concurrently. Balances may go negative (I-27).
 func (s *Service) PostMovement(ctx context.Context, householdID uuid.UUID, in PostInput) (uuid.UUID, error) {
 	if dir, ok := postableKinds[in.Kind]; !ok || dir != in.Direction {

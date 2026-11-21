@@ -34,7 +34,9 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/cards/{cardId}/invoices", h.listInvoices)
 
 	r.Get("/invoices/{invoiceId}", h.getInvoice)
-	r.With(h.idem.Require).Post("/invoices/{invoiceId}/close", h.closeInvoice) // ADR 0007
+	r.With(h.idem.Require).Post("/invoices/{invoiceId}/close", h.closeInvoice)        // ADR 0007
+	r.With(h.idem.Require).Post("/invoices/{invoiceId}/payments", h.payInvoice)       // ADR 0007
+	r.With(h.idem.Require).Post("/invoices/{invoiceId}/adjustments", h.adjustInvoice) // ADR 0007
 }
 
 type cardResponse struct {

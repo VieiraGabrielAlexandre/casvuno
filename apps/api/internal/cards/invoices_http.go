@@ -24,6 +24,7 @@ type invoiceResponse struct {
 	ClosingPending        bool       `json:"closingPending"`
 	InstallmentsCount     int        `json:"installmentsCount"`
 	InstallmentsCents     int64      `json:"installmentsCents"`
+	AdjustmentsCents      int64      `json:"adjustmentsCents"`
 	TotalCents            int64      `json:"totalCents"`
 	PaidCents             int64      `json:"paidCents"`
 	OutstandingCents      int64      `json:"outstandingCents"`
@@ -40,8 +41,8 @@ func toInvoiceResponse(i Invoice, today time.Time) invoiceResponse {
 		ClosingOn: kernel.FormatDate(i.ClosingOn), DueOn: kernel.FormatDate(i.DueOn),
 		ReferenceMonth: i.DueOn.Format("2006-01"), // ADR 0003: the month of the due date
 		Status:         i.Status, PaymentStatus: i.PaymentStatus(), ClosingPending: i.ClosingPending(today),
-		InstallmentsCount: i.InstallmentsCount, InstallmentsCents: i.InstallmentsCents,
-		TotalCents: i.TotalCents(), PaidCents: i.PaidCents(), OutstandingCents: i.OutstandingCents(),
+		InstallmentsCount: i.InstallmentsCount, InstallmentsCents: i.InstallmentsCents, AdjustmentsCents: i.AdjustmentsCents,
+		TotalCents: i.TotalCents(), PaidCents: i.PaidCents, OutstandingCents: i.OutstandingCents(),
 		ClosedBaseAmountCents: i.ClosedBaseAmountCents, ClosedAt: i.ClosedAt,
 		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt,
 	}
@@ -68,17 +69,51 @@ type invoiceInstallmentResponse struct {
 	PurchaseAmountCents int64   `json:"purchaseAmountCents"`
 }
 
-// invoiceDetailResponse follows ObligationDetail: the invoice and its lines (payments and
-// adjustments join in F4.5).
+type invoicePaymentResponse struct {
+	ID                string    `json:"id"`
+	AmountCents       int64     `json:"amountCents"`
+	PaidOn            string    `json:"paidOn"`
+	AccountID         string    `json:"accountId"`
+	MovementID        string    `json:"movementId"`
+	CreatedByMemberID string    `json:"createdByMemberId"`
+	CreatedAt         time.Time `json:"createdAt"`
+}
+
+type invoiceAdjustmentResponse struct {
+	ID                string    `json:"id"`
+	AmountCents       int64     `json:"amountCents"`
+	Reason            string    `json:"reason"`
+	CreatedByMemberID string    `json:"createdByMemberId"`
+	CreatedAt         time.Time `json:"createdAt"`
+}
+
+// invoiceDetailResponse follows ObligationDetail: the invoice, its lines, its payments and
+// its adjustments.
 type invoiceDetailResponse struct {
 	Invoice      invoiceResponse              `json:"invoice"`
 	Installments []invoiceInstallmentResponse `json:"installments"`
+	Payments     []invoicePaymentResponse     `json:"payments"`
+	Adjustments  []invoiceAdjustmentResponse  `json:"adjustments"`
 }
 
 func toInvoiceDetailResponse(d InvoiceDetail, today time.Time) invoiceDetailResponse {
 	out := invoiceDetailResponse{
 		Invoice:      toInvoiceResponse(d.Invoice, today),
 		Installments: make([]invoiceInstallmentResponse, 0, len(d.Installments)),
+		Payments:     make([]invoicePaymentResponse, 0, len(d.Payments)),
+		Adjustments:  make([]invoiceAdjustmentResponse, 0, len(d.Adjustments)),
+	}
+	for _, p := range d.Payments {
+		out.Payments = append(out.Payments, invoicePaymentResponse{
+			ID: p.ID.String(), AmountCents: p.AmountCents, PaidOn: kernel.FormatDate(p.PaidOn), AccountID: p.AccountID.String(),
+			MovementID: p.MovementID.String(), CreatedByMemberID: p.CreatedByMemberID.String(), CreatedAt: p.CreatedAt,
+		})
+	}
+	for _, a := range d.Adjustments {
+		out.Adjustments = append(out.Adjustments, invoiceAdjustmentResponse{
+			ID: a.ID.String(), AmountCents: a.AmountCents, Reason: a.Reason,
+			CreatedByMemberID: a.CreatedByMemberID.String(), CreatedAt: a.CreatedAt,
+		})
 	}
 	for _, i := range d.Installments {
 		item := invoiceInstallmentResponse{
@@ -189,6 +224,62 @@ func (h *Handler) closeInvoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toInvoiceDetailResponse(d, h.svc.Today(m)))
+}
+
+type payInvoiceRequest struct {
+	AmountCents int64  `json:"amountCents" validate:"required"`
+	PaidOn      string `json:"paidOn" validate:"required"`
+	AccountID   string `json:"accountId" validate:"required,uuid"`
+}
+
+func (h *Handler) payInvoice(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.invoiceID(w, r)
+	if !ok {
+		return
+	}
+	var req payInvoiceRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	paidOn, err := kernel.ParseDate(req.PaidOn)
+	if err != nil {
+		httpx.WriteError(w, r, h.log, validation("paidOn", "date=YYYY-MM-DD", "Data inválida. Use AAAA-MM-DD."))
+		return
+	}
+	m, _ := authctx.MembershipFrom(r.Context())
+	d, err := h.svc.PayInvoice(r.Context(), m, id, PaymentInput{
+		AmountCents: req.AmountCents, PaidOn: paidOn, AccountID: uuid.MustParse(req.AccountID), // validated by tags
+	})
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, toInvoiceDetailResponse(d, h.svc.Today(m)))
+}
+
+type adjustInvoiceRequest struct {
+	AmountCents int64  `json:"amountCents" validate:"required"`
+	Reason      string `json:"reason" validate:"required"`
+}
+
+func (h *Handler) adjustInvoice(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.invoiceID(w, r)
+	if !ok {
+		return
+	}
+	var req adjustInvoiceRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	m, _ := authctx.MembershipFrom(r.Context())
+	d, err := h.svc.AdjustInvoice(r.Context(), m, id, AdjustmentInput(req))
+	if err != nil {
+		httpx.WriteError(w, r, h.log, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, toInvoiceDetailResponse(d, h.svc.Today(m)))
 }
 
 func (h *Handler) invoiceID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {

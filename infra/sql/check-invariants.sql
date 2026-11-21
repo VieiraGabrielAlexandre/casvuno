@@ -98,6 +98,39 @@ WHERE v.status = 'CLOSED'
 
 UNION ALL
 
+-- INV-06: 0 <= Σ invoice payments <= invoice total (ACTIVE installments + adjustments).
+SELECT 'INV-06', v.id::text, 'invoice paid beyond its total or with a negative total'
+FROM card_invoices v
+CROSS JOIN LATERAL (
+    SELECT (SELECT COALESCE(sum(i.amount_cents), 0) FROM card_installments i
+            WHERE i.household_id = v.household_id AND i.card_invoice_id = v.id AND i.status = 'ACTIVE')
+         + (SELECT COALESCE(sum(a.amount_cents), 0) FROM invoice_adjustments a
+            WHERE a.household_id = v.household_id AND a.card_invoice_id = v.id) AS total,
+           (SELECT COALESCE(sum(p.amount_cents), 0) FROM invoice_payments p
+            WHERE p.household_id = v.household_id AND p.card_invoice_id = v.id) AS paid
+) t
+WHERE t.total < 0 OR t.paid > t.total
+
+UNION ALL
+
+-- INV-07: each invoice payment points to one OUT/INVOICE_PAYMENT movement of the same amount
+-- and date.
+SELECT 'INV-07', p.id::text, 'invoice payment movement does not match'
+FROM invoice_payments p
+JOIN account_movements m ON m.household_id = p.household_id AND m.id = p.account_movement_id
+WHERE m.amount_cents <> p.amount_cents OR m.posted_on <> p.paid_on
+   OR (m.direction, m.kind) <> ('OUT', 'INVOICE_PAYMENT')
+
+UNION ALL
+
+-- INV-07 (converse): invoice-payment cash only exists as the cash side of an invoice payment.
+SELECT 'INV-07', m.id::text, 'invoice payment movement without an invoice payment'
+FROM account_movements m
+WHERE m.kind = 'INVOICE_PAYMENT'
+  AND NOT EXISTS (SELECT 1 FROM invoice_payments p WHERE p.household_id = m.household_id AND p.account_movement_id = m.id)
+
+UNION ALL
+
 -- INV-04: payments never exceed the obligation.
 SELECT 'INV-04', o.id::text, 'payments exceed the obligation amount'
 FROM obligations o

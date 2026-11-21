@@ -67,6 +67,7 @@ var cardsModule = fx.Module("cards",
 		cards.NewHandler,
 		// households implements the consumer-defined cards.MemberChecker.
 		func(s *households.Service) cards.MemberChecker { return s },
+		func(s *accounts.Service) cards.Cash { return cardsCash{s} },
 	),
 )
 
@@ -99,6 +100,16 @@ func (c ledgerCards) PlaceInstallments(ctx context.Context, householdID uuid.UUI
 		out = append(out, ledger.CardInstallment(i))
 	}
 	return out, placed.Shifted, nil
+}
+
+// cardsCash adapts the accounts module to cards.Cash (invoice payments, INV-07).
+type cardsCash struct{ accounts *accounts.Service }
+
+func (c cardsCash) PayInvoice(ctx context.Context, householdID uuid.UUID, out cards.CashOut) (uuid.UUID, error) {
+	return c.accounts.PostMovement(ctx, householdID, accounts.PostInput{
+		AccountID: out.AccountID, Direction: accounts.DirectionOut, Kind: accounts.KindInvoicePayment,
+		AmountCents: out.AmountCents, PostedOn: out.PostedOn, Description: out.Description, Field: out.Field,
+	})
 }
 
 // ledgerCash adapts the accounts module to ledger.Cash (direct payments and receipts of

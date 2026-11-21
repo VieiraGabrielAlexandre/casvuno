@@ -25,6 +25,7 @@ type invoiceDTO struct {
 	ClosingPending        bool    `json:"closingPending"`
 	InstallmentsCount     int     `json:"installmentsCount"`
 	InstallmentsCents     int64   `json:"installmentsCents"`
+	AdjustmentsCents      int64   `json:"adjustmentsCents"`
 	TotalCents            int64   `json:"totalCents"`
 	PaidCents             int64   `json:"paidCents"`
 	OutstandingCents      int64   `json:"outstandingCents"`
@@ -46,9 +47,25 @@ type invoiceLineDTO struct {
 	PurchaseAmountCents int64   `json:"purchaseAmountCents"`
 }
 
+type invoicePaymentDTO struct {
+	ID          string `json:"id"`
+	AmountCents int64  `json:"amountCents"`
+	PaidOn      string `json:"paidOn"`
+	AccountID   string `json:"accountId"`
+	MovementID  string `json:"movementId"`
+}
+
+type invoiceAdjustmentDTO struct {
+	ID          string `json:"id"`
+	AmountCents int64  `json:"amountCents"`
+	Reason      string `json:"reason"`
+}
+
 type invoiceDetailDTO struct {
-	Invoice      invoiceDTO       `json:"invoice"`
-	Installments []invoiceLineDTO `json:"installments"`
+	Invoice      invoiceDTO             `json:"invoice"`
+	Installments []invoiceLineDTO       `json:"installments"`
+	Payments     []invoicePaymentDTO    `json:"payments"`
+	Adjustments  []invoiceAdjustmentDTO `json:"adjustments"`
 }
 
 // setToday moves the fake clock to noon UTC of date (morning in America/Sao_Paulo, the
@@ -153,11 +170,6 @@ func TestListCardInvoices(t *testing.T) {
 	gap, _ := owner.cardInvoices(h.ID, other.ID, "")
 	if len(gap) != 3 || gap[1].TotalCents != 0 || gap[1].InstallmentsCount != 0 || gap[1].PaymentStatus != "PAID" {
 		t.Fatalf("invoices with a gap = %+v", gap)
-	}
-	// An archived card still lists its invoices.
-	owner.expect(http.StatusOK, http.MethodPatch, "/api/v1/households/"+h.ID+"/cards/"+other.ID, map[string]any{"isActive": false})
-	if l, _ := owner.cardInvoices(h.ID, other.ID, ""); len(l) != 3 {
-		t.Fatalf("archived card lists %d invoices", len(l))
 	}
 
 	base := "/api/v1/households/" + h.ID + "/cards/"

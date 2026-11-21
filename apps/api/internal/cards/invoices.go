@@ -18,8 +18,8 @@ import (
 
 var errInvoiceNotFound = kernel.NewError(kernel.ErrNotFound, "INVOICE_NOT_FOUND", "Fatura não encontrada.")
 
-// Invoice is a card invoice with its totals. Until invoice payments and adjustments exist
-// (F4.5), the total is the sum of its ACTIVE installments and nothing has been paid.
+// Invoice is a card invoice with its totals (INV-06): total = ACTIVE installments +
+// adjustments; outstanding = total − payments.
 type Invoice struct {
 	ID                    uuid.UUID
 	CardID                uuid.UUID
@@ -32,21 +32,20 @@ type Invoice struct {
 	ClosedByMemberID      *uuid.UUID
 	InstallmentsCents     int64
 	InstallmentsCount     int
+	AdjustmentsCents      int64
+	PaidCents             int64
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 }
 
-// TotalCents is what the invoice charges: its active installments (+ adjustments, F4.5).
-func (i Invoice) TotalCents() int64 { return i.InstallmentsCents }
-
-// PaidCents is the sum of the invoice payments (F4.5; none can exist yet).
-func (i Invoice) PaidCents() int64 { return 0 }
+// TotalCents is what the invoice charges: its active installments plus its adjustments.
+func (i Invoice) TotalCents() int64 { return i.InstallmentsCents + i.AdjustmentsCents }
 
 // OutstandingCents is what is left to pay (INV-06).
-func (i Invoice) OutstandingCents() int64 { return i.TotalCents() - i.PaidCents() }
+func (i Invoice) OutstandingCents() int64 { return i.TotalCents() - i.PaidCents }
 
 // PaymentStatus is derived from the balance, never stored (I-03).
-func (i Invoice) PaymentStatus() string { return domain.PaymentStatus(i.TotalCents(), i.PaidCents()) }
+func (i Invoice) PaymentStatus() string { return domain.PaymentStatus(i.TotalCents(), i.PaidCents) }
 
 // ClosingPending is true for an OPEN invoice whose closing date has arrived: the UI asks the
 // family to check the bank statement and close it (I-15; there is no auto-close).
@@ -71,10 +70,33 @@ type InvoiceInstallment struct {
 	PurchaseAmountCents int64
 }
 
-// InvoiceDetail is an invoice with all its installments (ACTIVE and CANCELLED).
+// InvoicePayment is a (partial or total) payment of an invoice and its cash movement.
+type InvoicePayment struct {
+	ID                uuid.UUID
+	AmountCents       int64
+	PaidOn            time.Time
+	AccountID         uuid.UUID
+	MovementID        uuid.UUID
+	CreatedByMemberID uuid.UUID
+	CreatedAt         time.Time
+}
+
+// InvoiceAdjustment is a signed correction of the invoice balance (RN-012).
+type InvoiceAdjustment struct {
+	ID                uuid.UUID
+	AmountCents       int64
+	Reason            string
+	CreatedByMemberID uuid.UUID
+	CreatedAt         time.Time
+}
+
+// InvoiceDetail is an invoice with all its installments (ACTIVE and CANCELLED), payments and
+// adjustments.
 type InvoiceDetail struct {
 	Invoice      Invoice
 	Installments []InvoiceInstallment
+	Payments     []InvoicePayment
+	Adjustments  []InvoiceAdjustment
 }
 
 // InvoicePosition is the keyset position of the invoice list (due date, id).
@@ -150,7 +172,26 @@ func (s *Service) GetInvoice(ctx context.Context, m authctx.Membership, id uuid.
 			PurchaseAmountCents: r.PurchaseAmountCents,
 		})
 	}
-	return InvoiceDetail{Invoice: toInvoice(row), Installments: items}, nil
+	payRows, err := q.ListInvoicePayments(ctx, store.ListInvoicePaymentsParams{HouseholdID: m.HouseholdID, CardInvoiceID: id})
+	if err != nil {
+		return InvoiceDetail{}, fmt.Errorf("list invoice payments: %w", err)
+	}
+	payments := make([]InvoicePayment, 0, len(payRows))
+	for _, r := range payRows {
+		payments = append(payments, InvoicePayment{
+			ID: r.ID, AmountCents: r.AmountCents, PaidOn: r.PaidOn, AccountID: r.AccountID,
+			MovementID: r.AccountMovementID, CreatedByMemberID: r.CreatedByMemberID, CreatedAt: r.CreatedAt,
+		})
+	}
+	adjRows, err := q.ListInvoiceAdjustments(ctx, store.ListInvoiceAdjustmentsParams{HouseholdID: m.HouseholdID, CardInvoiceID: id})
+	if err != nil {
+		return InvoiceDetail{}, fmt.Errorf("list invoice adjustments: %w", err)
+	}
+	adjustments := make([]InvoiceAdjustment, 0, len(adjRows))
+	for _, r := range adjRows {
+		adjustments = append(adjustments, InvoiceAdjustment(r))
+	}
+	return InvoiceDetail{Invoice: toInvoice(row), Installments: items, Payments: payments, Adjustments: adjustments}, nil
 }
 
 // CloseInvoice closes an OPEN invoice from its closing date on (I-15, ADR 0003) and freezes
@@ -201,6 +242,7 @@ func toInvoice(r store.GetInvoiceRow) Invoice {
 		ID: r.ID, CardID: r.CreditCardID, CycleStartOn: r.CycleStartOn, ClosingOn: r.ClosingOn, DueOn: r.DueOn,
 		Status: r.Status, ClosedBaseAmountCents: r.ClosedBaseAmountCents, ClosedAt: r.ClosedAt,
 		ClosedByMemberID: r.ClosedByMemberID, InstallmentsCents: r.InstallmentsCents,
-		InstallmentsCount: int(r.InstallmentsCount), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		InstallmentsCount: int(r.InstallmentsCount), AdjustmentsCents: r.AdjustmentsCents, PaidCents: r.PaidCents,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }

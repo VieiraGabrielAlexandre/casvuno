@@ -193,6 +193,8 @@ func householdRoutes(ids routeIDs) []struct {
 		{http.MethodGet, "/cards/" + ids.card + "/invoices", nil},
 		{http.MethodGet, "/invoices/" + ids.invoice, nil},
 		{http.MethodPost, "/invoices/" + ids.invoice + "/close", nil},
+		{http.MethodPost, "/invoices/" + ids.invoice + "/payments", map[string]any{"amountCents": 1, "paidOn": "2026-11-10", "accountId": ids.account}},
+		{http.MethodPost, "/invoices/" + ids.invoice + "/adjustments", map[string]any{"amountCents": 1, "reason": "Invasão"}},
 		{http.MethodPost, "/transactions", expenseBody(ids.category, ids.account, 1)},
 		{http.MethodGet, "/transactions", nil},
 		{http.MethodGet, "/transactions/" + ids.transaction, nil},
@@ -252,9 +254,19 @@ func TestHouseholdIsolation(t *testing.T) {
 	// A's invoices addressed through B: listing, detail and closing.
 	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/cards/"+cardA.ID+"/invoices", nil)
 	ownerB.expect(http.StatusNotFound, http.MethodGet, "/api/v1/households/"+b.ID+"/invoices/"+purchaseA.Installments[0].InvoiceID, nil)
-	if code := ownerB.expect(http.StatusNotFound, http.MethodPost, "/api/v1/households/"+b.ID+"/invoices/"+purchaseA.Installments[0].InvoiceID+"/close",
-		nil, "Idempotency-Key", uuid.NewString()).errorCode(t); code != "INVOICE_NOT_FOUND" {
-		t.Fatalf("got %s", code)
+	invoiceA := "/api/v1/households/" + b.ID + "/invoices/" + purchaseA.Installments[0].InvoiceID
+	for _, rt := range []struct {
+		path string
+		body any
+	}{
+		{"/close", nil},
+		{"/payments", map[string]any{"amountCents": 100, "paidOn": "2026-11-10", "accountId": accB.ID}},
+		{"/adjustments", map[string]any{"amountCents": 100, "reason": "x"}},
+	} {
+		if code := ownerB.expect(http.StatusNotFound, http.MethodPost, invoiceA+rt.path, rt.body,
+			"Idempotency-Key", uuid.NewString()).errorCode(t); code != "INVOICE_NOT_FOUND" {
+			t.Fatalf("%s: got %s", rt.path, code)
+		}
 	}
 	if l := ownerB.cards(b.ID, "?includeArchived=true"); len(l) != 0 {
 		t.Fatalf("B lists cards %+v", l)
@@ -336,6 +348,15 @@ func TestHouseholdIsolation(t *testing.T) {
 	}
 	if after := countRows(t, api); !maps.Equal(before, after) {
 		t.Fatalf("cross-household requests changed data: before %v after %v", before, after)
+	}
+	// B's own invoice paid from A's account: rejected as if the account did not exist.
+	cardB := ownerB.createCard(b.ID, cardBody(b.MemberID, nil))
+	purchaseB := ownerB.purchase(b.ID, purchaseBody(catB.ID, cardB.ID, 1000, 1, "2026-11-10"))
+	if code := ownerB.expect(http.StatusUnprocessableEntity, http.MethodPost,
+		"/api/v1/households/"+b.ID+"/invoices/"+purchaseB.Installments[0].InvoiceID+"/payments",
+		map[string]any{"amountCents": 100, "paidOn": "2026-11-10", "accountId": accA.ID},
+		"Idempotency-Key", uuid.NewString()).errorCode(t); code != "ACCOUNT_NOT_FOUND" {
+		t.Fatalf("got %s", code)
 	}
 	forecastB := ownerB.createForecast(b.ID, forecastBody("EXPENSE", catB.ID, nil, 300, "2026-11-10", "2026-11-20"))
 	txB := ownerB.createTransaction(b.ID, expenseBody(catB.ID, accB.ID, 200))
@@ -457,7 +478,7 @@ func TestAuditTrail(t *testing.T) {
 func countRows(t *testing.T, api *testAPI) map[string]int64 {
 	t.Helper()
 	out := map[string]int64{}
-	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers", "credit_cards", "card_invoices", "card_installments", "transactions", "obligations", "obligation_payments", "quick_templates"} {
+	for _, table := range []string{"households", "household_members", "household_invites", "audit_events", "categories", "accounts", "account_movements", "transfers", "credit_cards", "card_invoices", "card_installments", "invoice_payments", "invoice_adjustments", "transactions", "obligations", "obligation_payments", "quick_templates"} {
 		var n int64
 		if err := api.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 			t.Fatal(err)

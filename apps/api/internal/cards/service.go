@@ -1,5 +1,5 @@
-// Package cards owns credit cards, their invoice cycle, invoices and installments (ADR
-// 0003). The card never stores the full number, the CVV or credentials. Purchases come from
+// Package cards owns credit cards, their invoice cycle, invoices, installments, invoice
+// payments and adjustments (ADR 0003). The card never stores the full number, the CVV or credentials. Purchases come from
 // the ledger, which writes the transaction and asks this module to place the installments.
 package cards
 
@@ -81,11 +81,12 @@ type Service struct {
 	clock   clock.Clock
 	audit   *audit.Recorder
 	members MemberChecker
+	cash    Cash
 }
 
 // NewService builds the cards service.
-func NewService(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, members MemberChecker) *Service {
-	return &Service{tx: tx, clock: clk, audit: rec, members: members}
+func NewService(tx *postgres.TxManager, clk clock.Clock, rec *audit.Recorder, members MemberChecker, cash Cash) *Service {
+	return &Service{tx: tx, clock: clk, audit: rec, members: members, cash: cash}
 }
 
 var errNotFound = kernel.NewError(kernel.ErrNotFound, "CARD_NOT_FOUND", "Cartão não encontrado.")
@@ -175,10 +176,10 @@ func (s *Service) Create(ctx context.Context, m authctx.Membership, in CreateInp
 	return s.Get(ctx, m, id)
 }
 
-// Update edits a card. An archived card only accepts being restored.
-//
-// Archiving is still always allowed: requiring no open invoice balance arrives with invoice
-// payments (F4.5, I-49). An archived card accepts no new purchase.
+// Update edits a card. An archived card only accepts being restored, and accepts no new
+// purchase or adjustment. Archiving requires nothing left to pay on any of its invoices,
+// future installments included (I-49); the card lock (FOR UPDATE) makes purchases and
+// adjustments wait.
 func (s *Service) Update(ctx context.Context, m authctx.Membership, id uuid.UUID, in UpdateInput) (Card, error) {
 	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
 		q := store.New(s.tx.Conn(ctx))
@@ -246,6 +247,15 @@ func (s *Service) Update(ctx context.Context, m authctx.Membership, id uuid.UUID
 			action = "credit_card.restored"
 			if !next.IsActive {
 				action = "credit_card.archived"
+				open, err := q.CardOutstandingCents(ctx, store.CardOutstandingCentsParams{HouseholdID: m.HouseholdID, CreditCardID: id})
+				if err != nil {
+					return fmt.Errorf("card outstanding: %w", err)
+				}
+				if open > 0 {
+					return kernel.NewError(kernel.ErrInvariant, "CARD_HAS_OPEN_BALANCE",
+						"Este cartão ainda tem faturas com saldo em aberto (inclusive parcelas futuras). Pague ou ajuste as faturas antes de arquivar.",
+						kernel.FieldError{Field: "isActive", Reason: "open_balance"})
+				}
 			}
 		}
 
