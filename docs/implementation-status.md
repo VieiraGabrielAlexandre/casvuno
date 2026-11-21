@@ -3,7 +3,7 @@
 > Atualize este arquivo ao fim de cada tarefa (ver `AGENTS.md` §8). Registre apenas comandos efetivamente executados e seus resultados reais.
 
 ## Fase atual
-F4 — Cartões e faturas: F4.1 a F4.5 concluídas (F4.3 commitada em #21, F4.4 em #23; F4.5 = entrega 17, ainda não commitada). I-50 e I-51 aprovados em 2026-11-21; I-52 aguardando aval. Próxima: F4.6 (cancelar compra no cartão e limite estimado).
+F4 — Cartões e faturas: F4.1 a F4.5 concluídas (F4.3 commitada em #21, F4.4 em #23; F4.5 = entrega 17, ainda não commitada). I-50, I-51 e I-52 aprovados em 2026-11-21. Próxima: F4.6 (cancelar compra no cartão e limite estimado).
 
 ## Concluído
 
@@ -376,7 +376,7 @@ I-04, I-08, I-15 (deslocar compra retroativa para a próxima fatura aberta), I-1
 - Arquivar cartão exige saldo zero em todas as faturas, inclusive futuras (422 `CARD_HAS_OPEN_BALANCE`, I-49).
 - `infra/sql/check-invariants.sql`: INV-06 (0 ≤ pago ≤ total), INV-07 (pagamento ↔ movimento `OUT/INVOICE_PAYMENT` de mesmo valor e data) e a recíproca (movimento de fatura sem pagamento).
 - OpenAPI 0.14.0 (`payInvoice`, `adjustInvoice`, `InvoicePayment`, `InvoiceAdjustment`, `PayInvoiceRequest`, `AdjustInvoiceRequest`, `Invoice.adjustmentsCents`, `CARD_HAS_OPEN_BALANCE` no PATCH de cartão) e cliente TS regenerado. Sem UI (F4.7).
-- Decisões não previstas: **I-52 [APROVAR]** em `docs/spec-review.md` (corpo e regras de pagamento e ajuste, ajuste em fatura aberta, cartão arquivado, parcelas futuras bloqueiam o arquivamento, descrição no extrato; desfazer pagamento de fatura fica sem rota por enquanto).
+- Decisões não previstas: **I-52** (aprovado em 2026-11-21) em `docs/spec-review.md` (corpo e regras de pagamento e ajuste, ajuste em fatura aberta, cartão arquivado, parcelas futuras bloqueiam o arquivamento, descrição no extrato; desfazer pagamento de fatura fica sem rota por enquanto).
 
 ## Comandos executados (entrega 17) e resultados reais
 | Comando | Resultado |
@@ -392,8 +392,7 @@ I-04, I-08, I-15 (deslocar compra retroativa para a próxima fatura aberta), I-1
 F4.6 — cancelar compra no cartão (RN-019, I-18): bloqueado (422) se alguma parcela estiver em fatura `CLOSED` ou se deixaria o saldo de uma fatura abaixo do já pago (INV-06; o trigger de 000014 só cobre inserções de pagamento/ajuste, então o cancelamento de parcelas precisa da mesma checagem sob lock); parcelas → `CANCELLED`, transação → `VOIDED`. Limite disponível estimado (RN-018, I-17): `limite − Σ saldo em aberto das faturas`, rotulado "estimado".
 
 ## Pendências reais
-- **I-52 aguardando aval** (decisões da F4.5, `docs/spec-review.md`).
-- **Desfazer pagamento de fatura** não tem rota (I-52): um pagamento lançado por engano hoje só se compensa por ajuste, sem devolver o caixa.
+- **Desfazer pagamento de fatura** não tem rota (I-52, aprovado assim): um pagamento lançado por engano hoje só se compensa por ajuste, sem devolver o caixa. Proposta registrada: `POST /invoices/{id}/payments/{paymentId}/reverse` com movimento `REVERSAL`, quando o usuário pedir.
 - **E2E adiado para a F8.5** (decisão do usuário, 2026-11-10). Fluxos a cobrir lá, **da F4.5:** nenhum (só API; pagar e ajustar fatura na tela são da F4.7). **Da F4.4:** nenhum (só API; a tela de faturas, com "fechamento pendente" e o botão de fechar, é da F4.7). **Da F4.3:** lista mostra compra no cartão com a fonte "Cartão de crédito" e sem "Corrigir"/"Cancelar"; "Repetir último" some quando o último lançamento foi no cartão (até a F4.7 levar o cartão ao formulário). **Da F3.5:** `+` → favorito completo → Lançar em ≤ 3 interações; lançamento pago e previsto (com e sem conta); repetir último; descrição vazia vira a categoria; duplo clique/retentativa sem lançar em dobro; offline sem falso sucesso (T19 parcial); filtros da lista (texto, período, categoria com subcategorias, cancelados); editar lançamento; corrigir (original cancelado, novo lançado, saldo certo); cancelar lançamento e conferir o saldo; pagar previsão parcial e total, vencida, previsão sem conta pedindo a conta; editar e cancelar previsão; criar/editar/excluir favorito; favorito invisível para outro membro. **Das fases anteriores:** categorias (criar principal e sub, arquivar principal esconde filhas, restaurar); cadastro → onboarding → família; login com `?next=`; gerar convite → abrir link deslogado → cadastro com convite → aceitar; MEMBER sem botões de OWNER; desativar membro; sair. **F2.4:** criar conta individual e conjunta; saldo negativo no saldo inicial; editar; arquivar bloqueado com saldo ≠ 0 e permitido com saldo 0; restaurar; extrato com "Carregar mais"; transferir de A para B e conferir saldos e **consolidado inalterado**; duplo clique/retentativa sem duplicar (uma transferência só); offline: faixa e envio bloqueado, sem falso sucesso; origem = destino bloqueada no cliente.
 - **Famílias criadas antes da entrega 3 não têm categorias** (o seed roda só na criação). Em dev, crie uma família nova ou cadastre manualmente em `/categories`.
 - **Rate limit por IP** usa o endereço TCP; atrás do Caddy (F8.2) será preciso confiar no cabeçalho do proxy, senão todos os usuários compartilham o mesmo limite.
