@@ -60,7 +60,7 @@ Todas as FKs entre recursos de negócio são compostas `(household_id, x_id)` �
 - **Transaction:** `ACTIVE → VOIDED` (terminal).
 - **Obligation:** `PLANNED → CONFIRMED` (primeiro pagamento, que cria a transação); `PLANNED|CONFIRMED → CANCELLED` (void, skip, edição de futuras). Derivados: `paymentStatus = UNPAID | PARTIALLY_PAID | PAID`; `isOverdue = due_on < hoje ∧ saldo > 0`.
 - **CardInvoice:** `OPEN → CLOSED` (manual, `hoje ≥ closing_on`, congela `closed_base_amount_cents`). Derivado: `paymentStatus`.
-- **CardInstallment:** `ACTIVE → CANCELLED` (só com fatura `OPEN`).
+- **CardInstallment:** `ACTIVE → CANCELLED` (só com fatura `OPEN`). **F4.6:** só pelo void da compra inteira (todas as parcelas juntas), bloqueado se alguma fatura estiver `CLOSED` ou ficaria com total < pago (I-53); trigger 000015 recusa total < pago também no `UPDATE` de parcela.
 - **RecurringOccurrence:** `PLANNED → GENERATED | SKIPPED | CANCELLED`.
 - **AccountMovement:** imutável. Estornado ⇔ existe um movimento `REVERSAL` com `reversal_of_id` = id dele.
 
@@ -88,7 +88,7 @@ Cada invariante tem teste. As marcadas com ✔︎SQL também são verificadas po
 | INV-16 | Toda referência cruzada aponta para a mesma família (FK composta + `household_id` em todo `WHERE`). |
 | INV-17 | Toda família tem ≥ 1 membro `OWNER` `ACTIVE`. |
 | INV-18 ✔︎SQL | Um movimento é estornado no máximo uma vez; o estorno tem direção oposta, mesmo valor e mesma conta. |
-| INV-19 ✔︎SQL | Transação `VOIDED`: obrigação `CANCELLED`, todo pagamento com movimento estornado, parcelas `CANCELLED` (F4.6). Converso: pagamento direto só é estornado com a obrigação cancelada. |
+| INV-19 ✔︎SQL | Transação `VOIDED`: obrigação `CANCELLED`, todo pagamento com movimento estornado, parcelas `CANCELLED` (F4.6). **F4.6:** compra no cartão `VOIDED` ⇔ todas as parcelas `CANCELLED` (checada no `check-invariants`); nenhum caixa se move. Converso: pagamento direto só é estornado com a obrigação cancelada. |
 | INV-20 | Nenhuma tabela, coluna ou rota representa divisão, cota ou dívida entre membros (RN-003). `person_member_id` e `scope` servem só para filtro. |
 
 ## 6. Efeitos de cada comando

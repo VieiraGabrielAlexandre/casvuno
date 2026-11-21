@@ -50,6 +50,9 @@ type cardResponse struct {
 	IsActive       bool      `json:"isActive"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+	// RN-018: estimated, never synchronised with the bank.
+	OutstandingCents             int64 `json:"outstandingCents"`
+	EstimatedAvailableLimitCents int64 `json:"estimatedAvailableLimitCents"`
 }
 
 func toCardResponse(c Card) cardResponse {
@@ -57,6 +60,7 @@ func toCardResponse(c Card) cardResponse {
 		ID: c.ID.String(), Name: c.Name, HolderMemberID: c.HolderMemberID.String(), LastFour: c.LastFour,
 		LimitCents: c.LimitCents, ClosingDay: c.ClosingDay, DueDay: c.DueDay, IsActive: c.IsActive,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		OutstandingCents: c.OutstandingCents, EstimatedAvailableLimitCents: c.AvailableLimitCents(),
 	}
 }
 

@@ -92,7 +92,7 @@ func TestMigrationsUpDownUp(t *testing.T) {
 	}
 	assertSchema(t, url, true)
 
-	if err := postgres.MigrateDown(url, 13); err != nil {
+	if err := postgres.MigrateDown(url, 14); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 	assertSchema(t, url, false)
@@ -185,7 +185,7 @@ func assertSchema(t *testing.T, url string, want bool) {
 		t.Fatalf("query: %v", err)
 	}
 	if !citext {
-		t.Error("citext (migration 1) must remain after reverting migrations 2-14")
+		t.Error("citext (migration 1) must remain after reverting migrations 2-15")
 	}
 }
 

@@ -17,6 +17,8 @@ import { useAccounts } from "@/features/accounts/hooks";
 import { useCategories } from "@/features/categories/hooks";
 import { useMembers } from "@/features/households/hooks";
 import { useTransactions, useVoidTransaction } from "@/features/ledger/hooks";
+
+import { voidMessage } from "./void-message";
 import {
   categoryOptions,
   kindLabel,
@@ -390,24 +392,22 @@ function TransactionRow({
               >
                 Editar
               </Button>
-              {/* Card purchases are corrected or cancelled with the invoices (F4.6). */}
+              {/* "Corrigir" pre-fills the entry form, which has no card until F4.7. */}
               {!t.creditCardId && (
-                <>
-                  <Link
-                    href={`/entry?household=${householdId}&correct=${t.id}`}
-                    className="inline-flex h-7 items-center rounded-lg border px-2.5 text-[0.8rem] font-medium hover:bg-muted"
-                  >
-                    Corrigir valor ou data
-                  </Link>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => setMode("void")}
-                  >
-                    Cancelar lançamento
-                  </Button>
-                </>
+                <Link
+                  href={`/entry?household=${householdId}&correct=${t.id}`}
+                  className="inline-flex h-7 items-center rounded-lg border px-2.5 text-[0.8rem] font-medium hover:bg-muted"
+                >
+                  Corrigir valor ou data
+                </Link>
               )}
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setMode("void")}
+              >
+                Cancelar lançamento
+              </Button>
             </div>
           )}
         </div>
@@ -429,12 +429,7 @@ function TransactionRow({
           aria-label="Confirmar cancelamento"
           className="flex flex-col gap-2 rounded-lg border border-destructive/40 p-3 text-sm"
         >
-          <p>
-            Cancelar &ldquo;{t.description}&rdquo; ({formatBRL(t.amountCents)})?
-            Ele sai do {income ? "total de receitas" : "consumo"} e o dinheiro{" "}
-            {income ? "sai de novo da" : "volta para a"} conta por um estorno. O
-            histórico fica guardado.
-          </p>
+          <p>{voidMessage(t)}</p>
           <FormError
             message={voidTx.isError ? errorMessage(voidTx.error) : undefined}
           />

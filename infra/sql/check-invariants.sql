@@ -131,6 +131,16 @@ WHERE m.kind = 'INVOICE_PAYMENT'
 
 UNION ALL
 
+-- INV-19 (card): a voided card purchase has every installment CANCELLED, and an active one
+-- has none cancelled (V1 cancels the whole purchase, F4.6).
+SELECT 'INV-19', t.id::text, 'card purchase status and installments out of step'
+FROM transactions t
+JOIN card_installments i ON i.household_id = t.household_id AND i.transaction_id = t.id
+GROUP BY t.id, t.status
+HAVING bool_or((t.status = 'VOIDED') <> (i.status = 'CANCELLED'))
+
+UNION ALL
+
 -- INV-04: payments never exceed the obligation.
 SELECT 'INV-04', o.id::text, 'payments exceed the obligation amount'
 FROM obligations o

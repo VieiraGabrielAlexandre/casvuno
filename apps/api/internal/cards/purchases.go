@@ -190,3 +190,57 @@ func lockForPurchase(ctx context.Context, q *store.Queries, householdID, cardID 
 	}
 	return card, nil
 }
+
+// CancelPurchase cancels the installments of a voided card purchase (RN-019, I-18). It is
+// allowed only while every invoice of the purchase is OPEN and the cancellation leaves each
+// one with total >= paid (INV-06); otherwise the family corrects it with an invoice
+// adjustment. It must run inside the caller's transaction, after the transaction row was
+// locked. Lock order: card, then the purchase's invoices (oldest first), as purchases do.
+func (s *Service) CancelPurchase(ctx context.Context, householdID, cardID, transactionID uuid.UUID) error {
+	return s.tx.WithinTx(ctx, func(ctx context.Context) error {
+		q := store.New(s.tx.Conn(ctx))
+		if _, err := q.LockCard(ctx, store.LockCardParams{HouseholdID: householdID, ID: cardID}); err != nil {
+			return fmt.Errorf("lock card: %w", err)
+		}
+		ref := store.LockPurchaseInvoicesParams{HouseholdID: householdID, TransactionID: transactionID}
+		if err := q.LockPurchaseInvoices(ctx, ref); err != nil {
+			return fmt.Errorf("lock purchase invoices: %w", err)
+		}
+		rows, err := q.ListPurchaseInstallments(ctx, store.ListPurchaseInstallmentsParams{HouseholdID: householdID, TransactionID: transactionID})
+		if err != nil {
+			return fmt.Errorf("list purchase installments: %w", err)
+		}
+		// One installment per invoice (Allocate), in installment order.
+		invoices := make([]Invoice, 0, len(rows))
+		cancelled := make([]int64, 0, len(rows))
+		for _, r := range rows {
+			if r.Status != "ACTIVE" {
+				continue
+			}
+			row, err := q.GetInvoice(ctx, store.GetInvoiceParams{HouseholdID: householdID, ID: r.CardInvoiceID})
+			if err != nil {
+				return fmt.Errorf("get invoice: %w", err)
+			}
+			invoices = append(invoices, toInvoice(row))
+			cancelled = append(cancelled, r.AmountCents)
+		}
+		for _, inv := range invoices {
+			if inv.Status == InvoiceClosed {
+				return kernel.NewError(kernel.ErrInvariant, "CARD_PURCHASE_ON_CLOSED_INVOICE",
+					"Esta compra tem parcela numa fatura já fechada. Corrija com um ajuste na fatura.")
+			}
+		}
+		for i, inv := range invoices {
+			if inv.OutstandingCents() < cancelled[i] {
+				return kernel.NewError(kernel.ErrInvariant, "CARD_PURCHASE_VOID_EXCEEDS_BALANCE",
+					"Cancelar esta compra deixaria uma fatura com valor menor que o já pago. Corrija com um ajuste na fatura.")
+			}
+		}
+		if err := q.CancelPurchaseInstallments(ctx, store.CancelPurchaseInstallmentsParams{
+			HouseholdID: householdID, TransactionID: transactionID,
+		}); err != nil {
+			return fmt.Errorf("cancel installments: %w", err)
+		}
+		return nil
+	})
+}

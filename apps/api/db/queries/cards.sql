@@ -1,13 +1,33 @@
+-- Cards with what is left to pay on all their invoices, future ones included (RN-018,
+-- I-17): the base of the estimated available limit.
 -- name: ListCards :many
-SELECT id, name, holder_member_id, last_four, limit_cents, closing_day, due_day, is_active, created_at, updated_at
-FROM credit_cards
-WHERE household_id = @household_id AND (@include_archived::boolean OR is_active)
-ORDER BY is_active DESC, lower(name), id;
+SELECT c.id, c.name, c.holder_member_id, c.last_four, c.limit_cents, c.closing_day, c.due_day, c.is_active,
+       c.created_at, c.updated_at,
+       ((SELECT COALESCE(sum(i.amount_cents), 0) FROM card_installments i
+         WHERE i.household_id = c.household_id AND i.credit_card_id = c.id AND i.status = 'ACTIVE')
+      + (SELECT COALESCE(sum(a.amount_cents), 0) FROM invoice_adjustments a
+         JOIN card_invoices v ON v.household_id = a.household_id AND v.id = a.card_invoice_id
+         WHERE a.household_id = c.household_id AND v.credit_card_id = c.id)
+      - (SELECT COALESCE(sum(p.amount_cents), 0) FROM invoice_payments p
+         JOIN card_invoices v ON v.household_id = p.household_id AND v.id = p.card_invoice_id
+         WHERE p.household_id = c.household_id AND v.credit_card_id = c.id))::bigint AS outstanding_cents
+FROM credit_cards c
+WHERE c.household_id = @household_id AND (@include_archived::boolean OR c.is_active)
+ORDER BY c.is_active DESC, lower(c.name), c.id;
 
 -- name: GetCard :one
-SELECT id, name, holder_member_id, last_four, limit_cents, closing_day, due_day, is_active, created_at, updated_at
-FROM credit_cards
-WHERE household_id = @household_id AND id = @id;
+SELECT c.id, c.name, c.holder_member_id, c.last_four, c.limit_cents, c.closing_day, c.due_day, c.is_active,
+       c.created_at, c.updated_at,
+       ((SELECT COALESCE(sum(i.amount_cents), 0) FROM card_installments i
+         WHERE i.household_id = c.household_id AND i.credit_card_id = c.id AND i.status = 'ACTIVE')
+      + (SELECT COALESCE(sum(a.amount_cents), 0) FROM invoice_adjustments a
+         JOIN card_invoices v ON v.household_id = a.household_id AND v.id = a.card_invoice_id
+         WHERE a.household_id = c.household_id AND v.credit_card_id = c.id)
+      - (SELECT COALESCE(sum(p.amount_cents), 0) FROM invoice_payments p
+         JOIN card_invoices v ON v.household_id = p.household_id AND v.id = p.card_invoice_id
+         WHERE p.household_id = c.household_id AND v.credit_card_id = c.id))::bigint AS outstanding_cents
+FROM credit_cards c
+WHERE c.household_id = @household_id AND c.id = @id;
 
 -- Locks the card row: serialises edits and archiving (and, from F4.3, purchases).
 -- name: LockCard :one
@@ -184,3 +204,26 @@ SELECT ((SELECT COALESCE(sum(i.amount_cents), 0) FROM card_installments i
       - (SELECT COALESCE(sum(p.amount_cents), 0) FROM invoice_payments p
          JOIN card_invoices v ON v.household_id = p.household_id AND v.id = p.card_invoice_id
          WHERE p.household_id = @household_id AND v.credit_card_id = @credit_card_id))::bigint;
+
+-- The installments of one purchase, with their invoices (void, F4.6).
+-- name: ListPurchaseInstallments :many
+SELECT i.id, i.card_invoice_id, i.amount_cents, i.status
+FROM card_installments i
+WHERE i.household_id = @household_id AND i.transaction_id = @transaction_id
+ORDER BY i.installment_number;
+
+-- Locks the invoices of one purchase (oldest first, as purchases do) before its installments
+-- are cancelled, so no close, payment or adjustment runs on them meanwhile.
+-- name: LockPurchaseInvoices :exec
+SELECT v.id
+FROM card_invoices v
+WHERE v.household_id = @household_id
+  AND v.id IN (SELECT i.card_invoice_id FROM card_installments i
+               WHERE i.household_id = @household_id AND i.transaction_id = @transaction_id)
+ORDER BY v.cycle_start_on
+FOR UPDATE;
+
+-- name: CancelPurchaseInstallments :exec
+UPDATE card_installments
+SET status = 'CANCELLED', updated_at = now()
+WHERE household_id = @household_id AND transaction_id = @transaction_id AND status = 'ACTIVE';

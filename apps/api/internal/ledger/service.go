@@ -111,6 +111,9 @@ type CardInstallment struct {
 type Cards interface {
 	RequireActiveCard(ctx context.Context, householdID, cardID uuid.UUID, field string) error
 	PlaceInstallments(ctx context.Context, householdID uuid.UUID, p CardPurchase) (installments []CardInstallment, shifted bool, err error)
+	// CancelInstallments cancels the installments of a purchase being voided (RN-019), or
+	// fails with 422 when an invoice is CLOSED or would be left below what was paid.
+	CancelInstallments(ctx context.Context, householdID, cardID, transactionID uuid.UUID) error
 }
 
 // Cash is what the ledger needs from the accounts module. Every method locks the accounts

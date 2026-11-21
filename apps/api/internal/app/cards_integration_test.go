@@ -18,6 +18,9 @@ type cardDTO struct {
 	ClosingDay     int     `json:"closingDay"`
 	DueDay         int     `json:"dueDay"`
 	IsActive       bool    `json:"isActive"`
+	// RN-018 (F4.6)
+	OutstandingCents             int64 `json:"outstandingCents"`
+	EstimatedAvailableLimitCents int64 `json:"estimatedAvailableLimitCents"`
 }
 
 // cardBody is a card held by holderMemberID; fields override the defaults.
